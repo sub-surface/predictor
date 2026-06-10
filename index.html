@@ -109,6 +109,13 @@
 
   <!-- FLOATING UI -->
   <div id="ui-layer">
+    <div id="news-pan" class="float-pan">
+      <div class="pan-tab" data-target="news-content">NEWS</div>
+      <div id="news-content" class="pan-body">
+        <div id="news-ticker">INITIALIZING SIGNAL...</div>
+      </div>
+    </div>
+
     <header class="float-pan" id="hud-pan">
       <div class="pan-tab" data-target="hud-content">HUD</div>
       <div id="hud-content" class="pan-body">
@@ -123,11 +130,25 @@
       </div>
     </header>
 
+    <div class="float-pan" id="minimap-pan">
+      <div class="pan-tab" data-target="minimap-content">MAP</div>
+      <div id="minimap-content" class="pan-body">
+        <canvas id="mmap" width="100" height="100"></canvas>
+      </div>
+    </div>
+
     <div class="float-pan" id="dossier-pan">
       <div class="pan-tab" data-target="dossier-content">DOSSIER</div>
       <div id="dossier-content" class="pan-body">
         <h2>PROTOCOL & CONTEXT</h2>
         <div id="dossierContent" class="c">Waiting for signal...</div>
+      </div>
+    </div>
+
+    <div class="float-pan" id="upgrades-pan">
+      <div class="pan-tab" data-target="upgrades-content">LOGS</div>
+      <div id="upgrades-content" class="pan-body">
+        <div id="notif-area"></div>
       </div>
     </div>
 

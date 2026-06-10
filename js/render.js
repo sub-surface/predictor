@@ -9,7 +9,7 @@ const ITEMG={gem:['✶','gemc'],ent:['◇','entc'],blissPick:['ψ','blc'],cache:
 
 if(typeof TP!=='undefined'&&TP.glyph&&TP.glyph.item) Object.assign(ITEMG, TP.glyph.item);
 
-const VW=25, VH=25;
+let newsIdx = 0, lastNews = 0, particles = [];
 
 function buildBoard(){
   const board=$('board');
@@ -22,12 +22,28 @@ function buildBoard(){
     c.innerHTML='<div class="stain"></div><span class="glyph"></span>';
     board.appendChild(c); cells.push(c);
   }
+
+  // Create particle layer
+  if(!$('particles')){
+    const p = document.createElement('div'); p.id = 'particles';
+    p.style.position = 'absolute'; p.style.inset = '0'; p.style.pointerEvents = 'none'; p.style.zIndex = '5';
+    $('stage').appendChild(p);
+  }
+
   requestAnimationFrame(tick);
 }
+
 
 function tick(t){
   if(!G.active || G.over) return requestAnimationFrame(tick);
   
+  // News Ticker Permuter
+  if(t - lastNews > 8000){
+    newsIdx = (newsIdx + 1) % TP.newsTicker.length;
+    if($('news-ticker')) $('news-ticker').textContent = TP.newsTicker[newsIdx];
+    lastNews = t;
+  }
+
   // Realtime pulses
   const s = Math.sin(t/400) * 0.1;
   document.querySelectorAll('.cell.locked').forEach(c => {
@@ -36,6 +52,26 @@ function tick(t){
   
   document.querySelectorAll('.mass').forEach(c => {
     c.style.filter = `hue-rotate(${Math.sin(t/1000) * 15}deg)`;
+  });
+
+  // Drifting Particles
+  if(Math.random() < 0.08 && particles.length < 30){
+    const p = document.createElement('div');
+    p.textContent = ri(2) ? '0' : '1';
+    p.style.position = 'absolute';
+    p.style.left = ri(100) + '%';
+    p.style.top = '105%';
+    p.style.fontSize = '10px';
+    p.style.color = 'var(--line-strong)';
+    p.style.opacity = '0.3';
+    p.style.fontFamily = 'monospace';
+    if($('particles')) $('particles').appendChild(p);
+    particles.push({el:p, x:ri(100), y:105, vel: 0.05 + Math.random()*0.15});
+  }
+  particles.forEach((p,i) => {
+    p.y -= p.vel;
+    p.el.style.top = p.y + '%';
+    if(p.y < -10){ p.el.remove(); particles.splice(i,1); }
   });
 
   requestAnimationFrame(tick);
@@ -67,6 +103,8 @@ function showOver(title,good,html){
 }
 function hideOver(){ $('over').classList.remove('show','choice'); }
 
+let newsIdx = 0, lastNews = 0;
+
 function drawAll(){
   const ps=G.enemies.map(e=>({e,p:predict(e)}));
   turnPreds=ps;
@@ -88,10 +126,10 @@ function drawAll(){
     if(G.walls.has(idx(x,y))){ c.classList.add('wall'); continue; }
     if(G.mass.has(idx(x,y))){ c.classList.add('mass'); g.textContent='~'; }
     if(G.stairs&&x===G.stairs.x&&y===G.stairs.y){ g.textContent='>'; g.classList.add('exit'); }
-    
+
     const it=G.items.find(i=>i.x===x&&i.y===y);
     if(it){ const[ch,cl]=ITEMG[it.type]; g.textContent=ch; g.classList.add(cl); }
-    
+
     const e=G.enemies.find(e=>e.x===x&&e.y===y);
     if(e){
       g.textContent=e.type==='avatar'?'Ω':e.type==='hive'?'H':e.type==='stalker'?'S':e.type==='forager'?'f':'d';
@@ -102,13 +140,13 @@ function drawAll(){
       const info=TP.glyph.enemy[e.type];
       if(info){ g.textContent=info.char; g.classList.add(info.cls); c.title=info.name; }
     }
-    
+
     if(x===G.player.x&&y===G.player.y){ 
       g.textContent=(TP.glyph.player&&TP.glyph.player.char)||'@'; 
       g.className='glyph you'; 
       c.title=(TP.glyph.player&&TP.glyph.player.name)||'you'; 
     }
-    
+
     // Habit Trail
     const trailIdx = G.trail.findIndex(p=>p.x===x&&p.y===y);
     if(trailIdx >= 0 && !(x===G.player.x&&y===G.player.y)){
@@ -144,7 +182,7 @@ function drawAll(){
   if(mods.delay) { dos += `· LAG: delayed modeling<br>`; anyMod=true; }
   if(mods.lowConf) { dos += `· DITHER: reduced confidence<br>`; anyMod=true; }
   if(!anyMod) dos += `· standard trace parameters<br>`;
-  
+
   if(G.mass && G.mass.size > 0){
     const pct = Math.round(100 * G.mass.size / (W*H));
     dos += `<br><b>THE MASS:</b><br>`;
@@ -172,9 +210,11 @@ function drawAll(){
   dos += `· training set: ${Math.round(Core.n)} examples<br>`;
   $('dossierContent').innerHTML = dos;
 
+  /* minimap */
+  drawMinimap();
+
   /* model panel: selected, else nearest predictive unit */
   if(!show){ for(const e of G.enemies) if(e.type!=='forager'&&(!show||cheb(e,G.player)<cheb(show,G.player))) show=e; }
-
   if(!show&&G.enemies.length) show=G.enemies[0];
   const fills=document.querySelectorAll('#bars .fill'), barEls=document.querySelectorAll('#bars .bar');
   if(show){
@@ -191,6 +231,64 @@ function drawAll(){
     fills.forEach(f=>f.style.height='0%'); barEls.forEach(b=>b.classList.remove('top'));
   }
 
+  /* notifications */
+  updateNotifications();
+
   /* pre-echo: when it is confident and you are legible, the score plays your move before you do */
   if(best&&best.p.conf>.55&&lp!==null&&lp>55)SFX.echo(best.p.tok);
 }
+
+function drawMinimap(){
+  const canvas = $('mmap'), ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0b0b0a'; ctx.fillRect(0,0,100,100);
+
+  // Walls
+  ctx.fillStyle = '#363635';
+  for(const k of G.walls){ const x = k % W, y = (k - x) / W; ctx.fillRect(x,y,1,1); }
+
+  // Mass
+  ctx.fillStyle = '#d95a52';
+  for(const k of G.mass){ const x = k % W, y = (k - x) / W; ctx.fillRect(x,y,1,1); }
+
+  // Enemies
+  ctx.fillStyle = '#f06a6f';
+  for(const e of G.enemies) ctx.fillRect(e.x, e.y, 1, 1);
+
+  // Player
+  ctx.fillStyle = '#54c7d3';
+  ctx.fillRect(G.player.x, G.player.y, 2, 2);
+}
+
+function updateNotifications(){
+  const area = $('notif-area');
+  let html = '';
+  if(G.echo.active) html += `<div class="notif"><b>ECHO:</b> online. parry ${G.echo.cd > 0 ? 'recharging ('+G.echo.cd+')' : 'READY'}</div>`;
+  if(G.mode === 'mass') html += `<div class="notif"><b>SURVIVAL:</b> the mass is ${Math.round(100 * G.mass.size / (W*H))}% world-dense</div>`;
+  if(G.floorSpec.delay) html += `<div class="notif"><b>SIGNAL:</b> lag protocol active</div>`;
+  if(G.floorSpec.lowConf) html += `<div class="notif"><b>SIGNAL:</b> dither protocol active</div>`;
+  area.innerHTML = html;
+}
+
+function tick(t){
+  if(!G.active || G.over) return requestAnimationFrame(tick);
+
+  // News Ticker Permuter
+  if(t - lastNews > 6000){
+    newsIdx = (newsIdx + 1) % TP.newsTicker.length;
+    $('news-ticker').textContent = TP.newsTicker[newsIdx];
+    lastNews = t;
+  }
+
+  // Realtime pulses
+  const s = Math.sin(t/400) * 0.1;
+  document.querySelectorAll('.cell.locked').forEach(c => {
+    c.style.transform = `scale(${1 + s})`;
+  });
+
+  document.querySelectorAll('.mass').forEach(c => {
+    c.style.filter = `hue-rotate(${Math.sin(t/1000) * 15}deg)`;
+  });
+
+  requestAnimationFrame(tick);
+}
+
