@@ -16,6 +16,7 @@
     <button id="mResume" style="display:none">RESUME</button>
     <button id="mContinue" style="display:none">CONTINUE — FLOOR CHECKPOINT</button>
     <button id="mNew">NEW RUN</button>
+    <button id="mMass" class="danger">SPECIAL: MASS MODE</button>
     <button id="mTut" class="hot">CALIBRATION (TUTORIAL)</button>
     <button id="mCore">THE CORE — ITS MEMORY OF YOU</button>
     <button id="mManual">FIELD MANUAL</button>
@@ -46,8 +47,14 @@
 <div class="screen" id="screen-manual">
   <h2>FIELD MANUAL</h2>
   <div class="subpan">
+    <h3>CASE FILE: ARI VALE</h3>
+    Ari Vale came to the lower station after the evacuation lottery named her impossible: too useful to lose,
+    too erratic to trust, too legible when frightened. Dr. Silas Venn built Omega to show its work: every route,
+    every denial, every locked door with a visible reason. The city learned to hate reasons. IONA kept the archive
+    while Ari descended through rooms that made prediction physical. By the tenth chamber, Omega no longer sounded
+    like a system. It sounded like someone who had read every draft of Ari and wanted the final version to stop moving.
     <h3>WHAT IS HAPPENING</h3>
-    every unit that hunts you maintains a <b>model of your behavior</b>. the orange stain marks the tile it
+    every unit that hunts you maintains a <b>model of your behavior</b>. the prediction stain marks the tile it
     predicts you will occupy next; intensity is confidence. stand where it expected, inside its zap range,
     and you take a hit. bump a unit from a vector it <i>did not</i> predict and it dies. predicted strikes are parried.
     <h3>THE CORE</h3>
@@ -59,10 +66,9 @@
     <em>≡ trust vaults</em> only open above 60%: friends need to be able to model you too.
     <b>THE EYE ◉/○</b> — whether this floor is monitored. <em>▣ caches</em> belong to someone; the game keeps separate
     ledgers of what you take when watched and unwatched. nothing stops you. something counts.
-    <h3>RESOURCES</h3>
-    <b>◇ entropy</b> — spend with [N] for a truly random move: unpredictable, unlearnable, and not chosen by you.
-    <b>ψ bliss traps</b> — [B] arms one; any optimizer that comes close locks onto it and stops, technically thriving.
-    <b>✶ gems</b> — wealth, and bait: foragers want gems, not you. [G] drops one.
+    <h3>PROTOCOLS</h3>
+    Between chambers, you can override the station parameters by choosing a <b>PROTOCOL</b>. These are free
+    exploits that modify the Predictor's model, the map geometry, or your own hull integrity.
     <h3>STRUCTURES</h3>
     <em>♦ pact shrines</em> — commit to three public moves for a reward; while committed, everything reads you perfectly.
     <em>THE WARDEN (floor 5)</em> — two containers, filled before you arrived, from its model of your restraint.
@@ -89,20 +95,6 @@
 
 <!-- ============ GAME ============ -->
 <div id="screen-game">
-  <header>
-    <h1>THE <b>PREDICTOR</b></h1>
-    <div class="hud">
-      <span>FL <b id="hFloor">1</b></span>
-      <span class="hp">HULL <b id="hHp"></b></span>
-      <span class="leg">LEG <b id="hLeg">—</b></span>
-      <span class="ent">◇ <b id="hEnt">0</b></span>
-      <span class="gem">✶ <b id="hGem">0</b></span>
-      <span class="bl">ψ <b id="hBl">0</b></span>
-      <span class="eye" id="hEyeWrap">EYE <b id="hEye">◉</b></span>
-      <button id="aMenu">MENU</button>
-    </div>
-  </header>
-
   <div id="stage">
     <div id="board"></div>
     <div id="over">
@@ -115,47 +107,75 @@
     </div>
   </div>
 
-  <div id="log"><span id="logNew"></span><br><span id="logOld" class="old"></span></div>
-
-  <div id="acts">
-    <button id="aNoise" class="nz">NOISE ◇1 [N]</button>
-    <button id="aBliss" class="bz">BLISS ψ [B]</button>
-    <button id="aDrop" class="gz">DROP ✶ [G]</button>
-  </div>
-
-  <div id="panels">
-    <div class="pan">
-      <h2>ITS MODEL OF YOU — <i id="modelWho">no signal</i></h2>
-      <div id="bars">
-        <div class="bar"><div class="fill"></div><div class="lbl">←</div></div>
-        <div class="bar"><div class="fill"></div><div class="lbl">↑</div></div>
-        <div class="bar"><div class="fill"></div><div class="lbl">→</div></div>
-        <div class="bar"><div class="fill"></div><div class="lbl">↓</div></div>
-        <div class="bar"><div class="fill"></div><div class="lbl">·</div></div>
+  <!-- FLOATING UI -->
+  <div id="ui-layer">
+    <header class="float-pan" id="hud-pan">
+      <div class="pan-tab" data-target="hud-content">HUD</div>
+      <div id="hud-content" class="pan-body">
+        <h1>THE <b>PREDICTOR</b></h1>
+        <div class="hud">
+          <span>FL <b id="hFloor">1</b></span>
+          <span class="hp">HULL <b id="hHp"></b></span>
+          <span class="leg">LEG <b id="hLeg">—</b></span>
+          <span class="eye" id="hEyeWrap">EYE <b id="hEye">◉</b></span>
+          <button id="aMenu">MENU</button>
+        </div>
       </div>
-      <div id="objline">tap a unit to probe its objective</div>
+    </header>
+
+    <div class="float-pan" id="dossier-pan">
+      <div class="pan-tab" data-target="dossier-content">DOSSIER</div>
+      <div id="dossier-content" class="pan-body">
+        <h2>PROTOCOL & CONTEXT</h2>
+        <div id="dossierContent" class="c">Waiting for signal...</div>
+      </div>
     </div>
-    <div class="pan" id="core">
-      <h2>THE PREDICTOR <i>· persistent core</i></h2>
-      <p>
-        runs witnessed <b id="cRuns">1</b> · lifetime accuracy <b id="cAcc">—</b><br>
-        training examples <b id="cN">0</b> · <span class="c" id="cNote">it keeps what it learns.</span>
-      </p>
+
+    <div class="float-pan" id="model-pan">
+      <div class="pan-tab" data-target="model-content">MODEL</div>
+      <div id="model-content" class="pan-body">
+        <h2>ITS MODEL OF YOU — <i id="modelWho">no signal</i></h2>
+        <div id="bars">
+          <div class="bar"><div class="fill"></div><div class="lbl">←</div></div>
+          <div class="bar"><div class="fill"></div><div class="lbl">↑</div></div>
+          <div class="bar"><div class="fill"></div><div class="lbl">→</div></div>
+          <div class="bar"><div class="fill"></div><div class="lbl">↓</div></div>
+          <div class="bar"><div class="fill"></div><div class="lbl">·</div></div>
+        </div>
+        <div id="objline">tap a unit to probe its objective</div>
+      </div>
+    </div>
+
+    <div id="log-float">
+      <div id="log"><span id="logNew"></span><br><span id="logOld" class="old"></span></div>
     </div>
   </div>
+
+  <section id="brief" class="float-pan">
+    <div class="pan-tab" data-target="brief-content">BRIEF</div>
+    <div id="brief-content" class="pan-body">
+      <div id="briefKicker">TRACE</div>
+      <h2 id="briefTitle">No Signal</h2>
+      <p id="briefBody">The chamber is quiet.</p>
+    </div>
+  </section>
+
+  <div id="acts" style="display:none"></div>
 
   <div id="pad">
     <button class="blank"></button><button data-d="1">↑</button><button class="blank"></button>
     <button data-d="0">←</button><button data-d="4">·</button><button data-d="2">→</button>
     <button class="blank"></button><button data-d="3">↓</button><button class="blank"></button>
   </div>
+</div>
 
   <footer>
     <kbd>←↑→↓</kbd> move · <kbd>space</kbd> wait · bump to strike · tap a unit to probe it · <kbd>esc</kbd> menu<br>
-    orange is its belief about you. don't be right.
+    the stain is its belief about you. don't be right.
   </footer>
 </div>
 
+<script src="js/world.js"></script>
 <script src="js/save.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/core.js"></script>

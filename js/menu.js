@@ -34,7 +34,6 @@ const Menu = {
     $('coreStats').innerHTML=
       `training examples <b>${Math.round(Core.n)}</b> · runs witnessed <b>${Core.runs}</b><br>`+
       `lifetime accuracy on you <b>${acc===null?'—':acc+'%'}</b> over ${Core.lifeP} predictions<br>`+
-      `entropy you have burned against it <b>${Core.ent}◇</b><br>`+
       `warden verdicts: <b>${w.length? w.join(', ') : 'none yet — it will guess from your thefts'}</b><br>`+
       `integrity watched <b>${ir.o===null?'—':ir.o+'%'}</b> · unwatched <b>${ir.u===null?'—':ir.u+'%'}</b>`;
     $('coreIO').value='';
@@ -53,6 +52,7 @@ const Menu = {
   },
 
   startRun(){ this.hide(); newRun('run'); },
+  startMass(){ this.hide(); newRun('mass'); },
   startTutorial(){ this.hide(); newRun('tutorial'); },
   async continueRun(){ if(await continueRun()) this.hide(); },
   resume(){ this.hide(); },

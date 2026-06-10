@@ -1,23 +1,14 @@
 'use strict';
 /* Input: keyboard, d-pad, swipe-to-move, tap-to-probe, ESC pauses. */
-function doMove(tok){ SFX.move(tok); step(tok,false); }
-
-function dropBliss(){
-  if(G.over||!G.active||G.player.bliss<1||G.forced.length||G.arming)return;
-  if(G.items.some(i=>i.x===G.player.x&&i.y===G.player.y))return say('no room here.');
-  G.player.bliss--; G.items.push({x:G.player.x,y:G.player.y,type:'trap'});
-  say('ψ bliss node armed. any optimizer that tastes it will decide it has won.');
-  step(4,false);
-}
-function dropGem(){
-  if(G.over||!G.active||G.player.gems<1||G.forced.length||G.arming)return;
-  if(G.items.some(i=>i.x===G.player.x&&i.y===G.player.y))return say('no room here.');
-  G.player.gems--; G.items.push({x:G.player.x,y:G.player.y,type:'gem'});
-  say('✶ bait dropped. foragers do not ask why gems appear.');
-  step(4,false);
-}
+function doMove(tok){ SFX.move(tok); step(tok); }
 
 function bindInput(){
+  document.querySelectorAll('.pan-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      tab.parentElement.classList.toggle('minimized');
+    });
+  });
+
   addEventListener('keydown',e=>{
     if(e.key==='Escape'){
       if(Menu.open&&G.active&&!G.over)Menu.resume();
@@ -28,16 +19,10 @@ function bindInput(){
     if(G.over){ if(e.key==='r'||e.key==='R'){ newRun(G.mode); } return; }
     const map={ArrowLeft:0,a:0,ArrowUp:1,w:1,ArrowRight:2,d:2,ArrowDown:3,s:3,' ':4,'.':4};
     if(e.key in map){ e.preventDefault(); doMove(map[e.key]); }
-    else if(e.key==='n'||e.key==='N')step(0,true);
-    else if(e.key==='b'||e.key==='B')dropBliss();
-    else if(e.key==='g'||e.key==='G')dropGem();
     else if(e.key==='m'||e.key==='M'){ Menu.toggleSound(); }
   });
 
   document.querySelectorAll('#pad button[data-d]').forEach(b=>b.addEventListener('click',()=>{ if(!Menu.open)doMove(+b.dataset.d); }));
-  $('aNoise').addEventListener('click',()=>step(0,true));
-  $('aBliss').addEventListener('click',dropBliss);
-  $('aDrop').addEventListener('click',dropGem);
   $('aMenu').addEventListener('click',()=>Menu.show('home'));
 
   let t0=null;
@@ -71,6 +56,7 @@ function bindInput(){
     Menu.startRun();
   });
   $('mTut').addEventListener('click',()=>Menu.startTutorial());
+  $('mMass').addEventListener('click',()=>Menu.startMass());
   $('mCore').addEventListener('click',()=>Menu.show('core'));
   $('mManual').addEventListener('click',()=>Menu.show('manual'));
   $('mSettings').addEventListener('click',()=>Menu.show('settings'));

@@ -7,22 +7,56 @@ const ITEMG={gem:['✶','gemc'],ent:['◇','entc'],blissPick:['ψ','blc'],cache:
   vault:['≡','gatec'],shrine:['♦','shrc'],trap:['ψ','blc'],chestT:['◻','gemc'],chestO:['◼','entc'],
   marker:['✦','gatec']};
 
+if(typeof TP!=='undefined'&&TP.glyph&&TP.glyph.item) Object.assign(ITEMG, TP.glyph.item);
+
+const VW=25, VH=25;
+
 function buildBoard(){
   const board=$('board');
-  board.style.setProperty('grid-template-columns',`repeat(${W},var(--cs))`);
-  const cs=Math.min(Math.floor((Math.min(innerWidth,620)-20)/W),50);
-  document.documentElement.style.setProperty('--cs',cs+'px');
-  for(let i=0;i<W*H;i++){
+  board.replaceChildren();
+  cells=[];
+  board.style.setProperty('grid-template-columns',`repeat(${VW},var(--cs))`);
+  resizeBoard();
+  for(let i=0;i<VW*VH;i++){
     const c=document.createElement('div'); c.className='cell'; c.dataset.i=i;
     c.innerHTML='<div class="stain"></div><span class="glyph"></span>';
     board.appendChild(c); cells.push(c);
   }
+  requestAnimationFrame(tick);
 }
 
+function tick(t){
+  if(!G.active || G.over) return requestAnimationFrame(tick);
+  
+  // Realtime pulses
+  const s = Math.sin(t/400) * 0.1;
+  document.querySelectorAll('.cell.locked').forEach(c => {
+    c.style.transform = `scale(${1 + s})`;
+  });
+  
+  document.querySelectorAll('.mass').forEach(c => {
+    c.style.filter = `hue-rotate(${Math.sin(t/1000) * 15}deg)`;
+  });
+
+  requestAnimationFrame(tick);
+}
+
+function resizeBoard(){
+  const cs = Math.max(24, Math.min(Math.floor(innerWidth/VW), Math.floor(innerHeight/VH)));
+  document.documentElement.style.setProperty('--cs',cs+'px');
+}
+
+/* ... existing say, setBrief, showOver, hideOver ... */
 function say(t){
   msgOld=$('logNew').textContent;
   $('logNew').textContent=t;
   $('logOld').textContent=msgOld;
+}
+
+function setBrief(kicker,title,body){
+  $('briefKicker').textContent=kicker;
+  $('briefTitle').textContent=title;
+  $('briefBody').textContent=body;
 }
 
 function showOver(title,good,html){
@@ -31,7 +65,7 @@ function showOver(title,good,html){
   $('overStats').innerHTML=html;
   $('over').classList.add('show');
 }
-function hideOver(){ $('over').classList.remove('show'); }
+function hideOver(){ $('over').classList.remove('show','choice'); }
 
 function drawAll(){
   const ps=G.enemies.map(e=>({e,p:predict(e)}));
@@ -39,14 +73,25 @@ function drawAll(){
   let best=null;
   for(const o of ps) if(o.p&&(!best||o.p.conf>best.p.conf)) best=o;
 
-  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    const c=cells[idx(x,y)], g=c.querySelector('.glyph'), s=c.querySelector('.stain');
+  const camX = Math.max(0, Math.min(W - VW, G.player.x - Math.floor(VW / 2)));
+  const camY = Math.max(0, Math.min(H - VH, G.player.y - Math.floor(VH / 2)));
+
+  for(let vy=0;vy<VH;vy++)for(let vx=0;vx<VW;vx++){
+    const x = camX + vx, y = camY + vy;
+    const c=cells[vy*VW+vx], g=c.querySelector('.glyph'), s=c.querySelector('.stain');
     c.className='cell'; g.className='glyph'; g.textContent=''; s.style.opacity=0;
     const old=c.querySelector('.hpdots'); if(old)old.remove();
+    g.style.opacity = 1; // Reset opacity from habit/echo logic
+    g.style.transform = ''; // Reset transform
+
+    if(!inB(x,y)){ c.classList.add('wall'); continue; }
     if(G.walls.has(idx(x,y))){ c.classList.add('wall'); continue; }
+    if(G.mass.has(idx(x,y))){ c.classList.add('mass'); g.textContent='~'; }
     if(G.stairs&&x===G.stairs.x&&y===G.stairs.y){ g.textContent='>'; g.classList.add('exit'); }
+    
     const it=G.items.find(i=>i.x===x&&i.y===y);
     if(it){ const[ch,cl]=ITEMG[it.type]; g.textContent=ch; g.classList.add(cl); }
+    
     const e=G.enemies.find(e=>e.x===x&&e.y===y);
     if(e){
       g.textContent=e.type==='avatar'?'Ω':e.type==='hive'?'H':e.type==='stalker'?'S':e.type==='forager'?'f':'d';
@@ -54,8 +99,31 @@ function drawAll(){
       if(e.bliss>0)g.classList.add('blissed');
       if(e.hp>1){ const hd=document.createElement('div'); hd.className='hpdots'; hd.textContent='•'.repeat(e.hp); c.appendChild(hd); }
       if(e===selected)c.classList.add('sel');
+      const info=TP.glyph.enemy[e.type];
+      if(info){ g.textContent=info.char; g.classList.add(info.cls); c.title=info.name; }
     }
-    if(x===G.player.x&&y===G.player.y){ g.textContent='@'; g.className='glyph you'; }
+    
+    if(x===G.player.x&&y===G.player.y){ 
+      g.textContent=(TP.glyph.player&&TP.glyph.player.char)||'@'; 
+      g.className='glyph you'; 
+      c.title=(TP.glyph.player&&TP.glyph.player.name)||'you'; 
+    }
+    
+    // Habit Trail
+    const trailIdx = G.trail.findIndex(p=>p.x===x&&p.y===y);
+    if(trailIdx >= 0 && !(x===G.player.x&&y===G.player.y)){
+      g.textContent = (TP.glyph.player&&TP.glyph.player.char)||'@';
+      g.className = 'glyph ghost';
+      g.style.opacity = 0.1 + (trailIdx * 0.05);
+    }
+
+    // Echo Drone
+    if(G.echo.active && x===G.echo.x && y===G.echo.y && !(x===G.player.x&&y===G.player.y)){
+      g.textContent = '✧';
+      g.className = 'glyph echo';
+      if(G.echo.cd > 0) g.style.opacity = 0.4;
+    }
+
     let stain=0;
     for(const o of ps) if(o.p&&o.p.x===x&&o.p.y===y) stain=Math.max(stain,.14+.42*o.p.conf);
     if(stain)s.style.opacity=stain;
@@ -66,13 +134,47 @@ function drawAll(){
   $('hFloor').textContent=G.floor;
   $('hHp').textContent='▮'.repeat(Math.max(0,G.player.hp))+'▯'.repeat(Math.max(0,G.player.maxhp-G.player.hp));
   const lp=legPct(); $('hLeg').textContent=lp===null?'—':lp+'%';
-  $('hEnt').textContent=G.player.ent; $('hGem').textContent=G.player.gems; $('hBl').textContent=G.player.bliss;
   $('hEye').textContent=G.observed?'◉':'○';
   $('hEyeWrap').style.opacity=G.observed?1:.45;
 
-  /* model panel: selected, else nearest predictive unit */
+  /* dossier panel */
+  let dos = `<b>ACTIVE PROTOCOLS:</b><br>`;
+  const mods = G.floorSpec || {};
+  let anyMod = false;
+  if(mods.delay) { dos += `· LAG: delayed modeling<br>`; anyMod=true; }
+  if(mods.lowConf) { dos += `· DITHER: reduced confidence<br>`; anyMod=true; }
+  if(!anyMod) dos += `· standard trace parameters<br>`;
+  
+  if(G.mass && G.mass.size > 0){
+    const pct = Math.round(100 * G.mass.size / (W*H));
+    dos += `<br><b>THE MASS:</b><br>`;
+    dos += `· CONSUMPTION: ${pct}%<br>`;
+    dos += `· VECTOR: expanding<br>`;
+  }
+
   let show=selected&&G.enemies.includes(selected)?selected:null;
+  if(show){
+    const bios = {
+      drone: 'Standard surveillance unit. It counts your turns and expects consistency. "It does not hate, it only totals."',
+      stalker: 'Advanced sequence reader. It looks at what you did *before* your last move. "Memory is a weapon."',
+      hive: 'A direct uplink to the persistent Core. It uses every run you have ever finished against you.',
+      forager: 'A resource-gathering automaton. It is indifferent to your presence, which makes it dangerous.',
+      avatar: 'The physical manifestation of the Predictor. Every weight and bias given a hand and a zap range.',
+    };
+    dos += `<br><b>UNIT CASE FILE:</b><br>`;
+    dos += `· TYPE: ${show.type.toUpperCase()}<br>`;
+    dos += `· INTENT: ${bios[show.type] || 'Unknown'}<br>`;
+  }
+
+  dos += `<br><b>CORE STATUS:</b><br>`;
+  dos += `· witness: run ${Core.runs+1}<br>`;
+  dos += `· lifetime accuracy: ${Core.accuracy()===null?'—':Core.accuracy()+'%'}<br>`;
+  dos += `· training set: ${Math.round(Core.n)} examples<br>`;
+  $('dossierContent').innerHTML = dos;
+
+  /* model panel: selected, else nearest predictive unit */
   if(!show){ for(const e of G.enemies) if(e.type!=='forager'&&(!show||cheb(e,G.player)<cheb(show,G.player))) show=e; }
+
   if(!show&&G.enemies.length) show=G.enemies[0];
   const fills=document.querySelectorAll('#bars .fill'), barEls=document.querySelectorAll('#bars .bar');
   if(show){
@@ -88,20 +190,6 @@ function drawAll(){
     $('objline').textContent='nothing here is modeling you. enjoy it.';
     fills.forEach(f=>f.style.height='0%'); barEls.forEach(b=>b.classList.remove('top'));
   }
-
-  /* core panel */
-  $('cRuns').textContent=Core.runs+1;
-  $('cAcc').textContent=Core.accuracy()===null?'—':Core.accuracy()+'%';
-  $('cN').textContent=Math.round(Core.n);
-  $('cNote').textContent = G.mode==='tutorial' ? 'sandboxed — this room is not recorded.'
-    : Core.n>800 ? 'it knows your gait by now.'
-    : Core.n>200 ? 'it is starting to feel familiar to it.'
-    : 'it keeps what it learns.';
-
-  /* action buttons */
-  $('aNoise').disabled=G.player.ent<1||G.forced.length>0||G.arming;
-  $('aBliss').disabled=G.player.bliss<1||G.forced.length>0||G.arming;
-  $('aDrop').disabled=G.player.gems<1||G.forced.length>0||G.arming;
 
   /* pre-echo: when it is confident and you are legible, the score plays your move before you do */
   if(best&&best.p.conf>.55&&lp!==null&&lp>55)SFX.echo(best.p.tok);

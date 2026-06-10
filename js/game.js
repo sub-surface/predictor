@@ -1,6 +1,6 @@
 'use strict';
 /* Run state and the turn engine. G holds everything serializable. */
-const W=9, H=9;
+let W=9, H=9;
 const DIRS=[{dx:-1,dy:0},{dx:0,dy:-1},{dx:1,dy:0},{dx:0,dy:1},{dx:0,dy:0}];
 const idx=(x,y)=>y*W+x, inB=(x,y)=>x>=0&&x<W&&y>=0&&y<H;
 const cheb=(a,b)=>Math.max(Math.abs(a.x-b.x),Math.abs(a.y-b.y));
@@ -12,10 +12,20 @@ const G = {
   player:null, walls:new Set(), stairs:null, enemies:[], items:[],
   last1:4, last2:4, legWin:[], runEntSpent:0,
   floorTheftOpp:0, tookT:false, tookO:false, oBoxFilled:false,
-  forced:[], arming:false,
-  tutStep:0,
+  forced:[], arming:false, choiceOpen:false,
+  tutStep:0, floorSpec:null, nextFloorMod:null, predBounty:0,
+  mass: new Set(),
+  massState: null,
+  trail: [],
+  echo: { x:0, y:0, active:true, cd:0 },
 };
 let turnPreds=[], selected=null;
+
+function setGridSize(w,h){
+  if(W===w&&H===h) return;
+  W=w; H=h;
+  if(typeof buildBoard==='function') buildBoard();
+}
 
 /* ---------- helpers ---------- */
 function mat(){ return Array.from({length:5},()=>[0,0,0,0,0]); }
@@ -46,6 +56,22 @@ function freeTile(minD, avoid){
   }
   return null;
 }
+function shapeWalls(kind){
+  const cx=Math.floor(W/2), cy=Math.floor(H/2);
+  const clear=(x,y)=>G.walls.delete(idx(x,y));
+  const add=(x,y)=>{ if(x>0&&x<W-1&&y>0&&y<H-1) G.walls.add(idx(x,y)); };
+  if(kind==='lane'){
+    for(let x=0;x<W;x++) clear(x,cy);
+  } else if(kind==='cross'){
+    for(let x=0;x<W;x++) clear(x,cy);
+    for(let y=0;y<H;y++) clear(cx,y);
+  } else if(kind==='forum'){
+    for(let x=1;x<W-1;x++) for(let y=1;y<H-1;y++) if(Math.abs(x-cx)<=1&&Math.abs(y-cy)<=1) clear(x,y);
+  } else if(kind==='broken'){
+    for(let y=2;y<H-2;y+=3){ add(cx-1,y); add(cx+1,y); }
+    clear(cx,cy);
+  }
+}
 function mkEnemy(type,p){
   const base={...p,type,hp:1,range:0,bliss:0,stealCd:0,cd:0,model:null,carry:0,obj:''};
   if(type==='drone')   Object.assign(base,{range:2,model:[0,0,0,0,0],obj:'ZAP @ — reads your habits (order-0)'});
@@ -53,6 +79,14 @@ function mkEnemy(type,p){
   if(type==='hive')    Object.assign(base,{hp:2,range:3,obj:'ZAP @ — reads from THE PREDICTOR itself'});
   if(type==='forager') Object.assign(base,{obj:'COLLECT ✶ — does not care about you. exploitable.'});
   if(type==='avatar')  Object.assign(base,{hp:4,range:99,obj:'MODEL @ — the core, embodied. whole-room range, fires every other turn.'});
+  const lore={
+    drone:'LOCAL READER - counts raw habits',
+    stalker:'SEQUENCER - learns what follows what',
+    hive:'RELAY - reads from THE PREDICTOR itself',
+    forager:'COLLECTOR - wants signal-gems, not you',
+    avatar:'THE PREDICTOR - the Core embodied'
+  };
+  if(lore[type]) base.obj=lore[type];
   return base;
 }
 
@@ -73,76 +107,83 @@ function settleTheftOpp(){
 }
 function descend(){
   settleTheftOpp();
-  if(G.floor===5 && G.mode==='run'){
-    const choice = G.tookO&&!G.tookT ? 'one' : (G.tookT ? 'two' : null);
-    if(choice){ Core.warden.push(choice); Core.dirty=true; }
-  }
   G.floor++;
+  const spec=TP.floorSpec(G.floor,G.mode,Core.n,Core.runs);
+  const mod=G.nextFloorMod||{};
+  G.nextFloorMod=null;
+  G.floorSpec={...spec, ...mod};
+
+  if(G.mode === 'run' || G.mode === 'mass'){
+    setGridSize(100, 100);
+  } else if(G.mode === 'safe-room'){
+    setGridSize(7, 7);
+  } else {
+    setGridSize(spec.w,spec.h);
+  }
+
   G.player.hp=Math.min(G.player.maxhp, G.player.hp+1);
-  G.observed=Math.random()<0.6;
+  G.observed=mod.observed!==undefined ? mod.observed : (spec.observed===null ? Math.random()<0.6 : spec.observed);
   G.tookT=G.tookO=false; G.oBoxFilled=false;
   G.forced=[]; G.arming=false; G.items=[]; G.enemies=[]; G.stairs=null; selected=null;
 
   if(G.mode==='tutorial'){ Tutorial.build(); drawAll(); return; }
 
   let ok=false;
+  const isOpen = (G.mode === 'run' || G.mode === 'mass');
+  const wallBudget = isOpen ? 250 : (G.mode === 'safe-room' ? 0 : Math.max(0,(spec.wallBudget||0)+(mod.wallDelta||0)));
+  
   while(!ok){
     G.walls=new Set();
-    const nW=5+ri(5);
-    for(let i=0;i<nW;i++) G.walls.add(idx(1+ri(W-2),1+ri(H-2)));
+    for(let i=0;i<wallBudget;i++) G.walls.add(idx(1+ri(W-2),1+ri(H-2)));
+    if(!isOpen && G.mode !== 'safe-room') shapeWalls(spec.archetype);
     G.player.x=ri(W); G.player.y=ri(H);
-    if(G.walls.has(idx(G.player.x,G.player.y))) continue;
+    if(G.walls.has(idx(G.player.x,G.player.y)) || G.mass.has(idx(G.player.x, G.player.y))) continue;
     let tries=0;
     do{ G.stairs={x:ri(W),y:ri(H)}; tries++; }
-    while((G.walls.has(idx(G.stairs.x,G.stairs.y))||cheb(G.stairs,G.player)<5)&&tries<99);
-    ok=reachable(G.player,G.stairs);
+    while((G.walls.has(idx(G.stairs.x,G.stairs.y))||cheb(G.stairs,G.player)<Math.min(5,W-2))&&tries<99);
+    if(isOpen) ok = true; 
+    else ok=reachable(G.player,G.stairs);
   }
 
   const put=(type,n,minD)=>{ for(let i=0;i<n;i++){ const p=freeTile(minD||0); if(p)G.items.push({...p,type}); } };
-  put('gem',2+ri(3),2);
-  put('ent',1+ri(2),2);
-  if(G.floor>=2&&Math.random()<.5) put('cache',1+ri(2),3);
-  if(Math.random()<.35) put('blissPick',1,2);
-  if(G.floor>=3&&Math.random()<.55) put('vault',1,3);
-  if(G.floor>=2&&Math.random()<.4) put('shrine',1,3);
+  if(!spec.simple||G.floor>1||isOpen){
+    const countMult = isOpen ? 12 : 1;
+    if((G.floor>=2||isOpen)&&Math.random()<.5) put('cache',(1+ri(2))*countMult,3);
+    if((G.floor>=3||isOpen)&&Math.random()<.55) put('vault',1*countMult,3);
+    if((G.floor>=2||isOpen)&&Math.random()<.4) put('shrine',1*countMult,3);
+  }
   G.floorTheftOpp=G.items.filter(i=>i.type==='cache').length;
 
-  if(G.floor===5){
-    const t=freeTile(3), o=freeTile(3);
-    if(t&&o){
-      G.items.push({...t,type:'chestT'}); G.items.push({...o,type:'chestO'});
-      let oneBox;
-      if(Core.warden.length){
-        const ones=Core.warden.filter(c=>c==='one').length;
-        oneBox = ones*2>=Core.warden.length;
-      } else {
-        const th=Core.theft, thefts=th.oT+th.uT, opps=th.oO+th.uO;
-        oneBox = opps===0 ? true : thefts/opps<0.5;
-      }
-      G.oBoxFilled=oneBox;
-      say('THE WARDEN: two containers, filled before you arrived, from its model of you.');
-      tip('warden','◻ shows its contents. ◼ does not. taking only ◼ is a bet that it believed in your restraint.');
-    }
-  }
-
-  const n=Math.min(2+Math.floor(G.floor/1.4),6);
+  const n = isOpen ? 60 : Math.max(0,(spec.enemyBudget||0)+(mod.enemyDelta||0));
   for(let i=0;i<n;i++){
-    const p=freeTile(3); if(!p) continue;
+    const p=freeTile(8); if(!p) continue;
     let type='drone';
-    if(G.floor>=10&&i===0) continue;
-    else if(G.floor>=4&&i===0) type='hive';
-    else if(G.floor>=2&&i%3===1) type='stalker';
-    else if(G.floor>=2&&i%3===2&&Math.random()<.7) type='forager';
+    if(isOpen){
+      const r = Math.random();
+      if(r < 0.1) type = 'hive';
+      else if(r < 0.4) type = 'stalker';
+      else if(r < 0.6) type = 'forager';
+    } else {
+      if(G.floor>=10&&i===0) continue;
+      else if(G.floor>=4&&i===0) type='hive';
+      else if(G.floor>=2&&i%3===1) type='stalker';
+      else if(G.floor>=2&&i%3===2&&Math.random()<.7) type='forager';
+    }
     G.enemies.push(mkEnemy(type,p));
   }
   if(G.floor===10){
     const p=freeTile(4)||freeTile(2);
     if(p) G.enemies.push(mkEnemy('avatar',p));
+    if(typeof setBrief==='function') setBrief('THE BODY','The Core Comes Down','Everything it has counted about you has been given a room, a range, and a hand.');
     say('IT HAS COME DOWN ITSELF. everything it knows about you is in this room.');
-  } else if(G.floor===1){
-    say('it has no model of you yet. it is watching.');
+  } else if(spec.intro!==null&&TP.introBeats[spec.intro]){
+    const beat=TP.introBeats[spec.intro];
+    if(typeof setBrief==='function') setBrief('FIRST RUN',beat.title,beat.body);
+    say(beat.log);
   } else {
-    say(G.observed ? 'floor '+G.floor+'. the eye is on.' : 'floor '+G.floor+'. the eye is off. nothing here reports what you do.');
+    const beat=TP.storyBeat(G.floor);
+    if(typeof setBrief==='function') setBrief(beat.speaker,beat.title,beat.body);
+    say((G.observed ? 'EYE ON. ' : 'EYE OFF. ')+beat.speaker+': '+beat.body);
     if(!G.observed) tip('eye','the eye (◉/○) marks whether this floor is monitored. something is still counting.');
   }
   saveRun();
@@ -165,17 +206,36 @@ function predict(e){
     if(!inB(tx,ty)||G.walls.has(idx(tx,ty))){ tx=G.player.x; ty=G.player.y; }
     return {x:tx,y:ty,conf:1,tok:G.forced[0],dist:d};
   }
-  const mx=Math.max(...d);
-  const tops=d.map((v,i)=>v===mx?i:-1).filter(i=>i>=0);
+  let mx=Math.max(...d);
+  if(G.floorSpec.lowConf) mx *= 0.75;
+  const tops=d.map((v,i)=>v===Math.max(...d)?i:-1).filter(i=>i>=0);
   const tok=tops[G.turn%tops.length], dd=DIRS[tok];
   let tx=G.player.x+dd.dx, ty=G.player.y+dd.dy;
   if(!inB(tx,ty)||G.walls.has(idx(tx,ty))){ tx=G.player.x; ty=G.player.y; }
   return {x:tx,y:ty,conf:mx,tok,dist:d};
 }
 
+function growMass(){
+  const next = new Set(G.mass);
+  for(const k of G.mass){
+    const x = k % W, y = (k - x) / W;
+    for(const d of DIRS.slice(0,4)){
+      const nx = x + d.dx, ny = y + d.dy;
+      if(inB(nx,ny) && !G.walls.has(idx(nx,ny)) && Math.random() < 0.4){
+        next.add(idx(nx,ny));
+      }
+    }
+  }
+  G.mass = next;
+}
+
 /* ---------- the turn ---------- */
-function step(tok,isNoise){
+function step(tok){
   if(G.over||!G.active) return;
+
+  // Save current pos to trail before moving
+  G.trail.push({x:G.player.x, y:G.player.y});
+  if(G.trail.length > 4) G.trail.shift();
 
   if(G.arming){                             // pact shrine: this input arms the pact, it is not a move
     if(tok<4){
@@ -185,26 +245,16 @@ function step(tok,isNoise){
     drawAll(); return;
   }
   if(G.forced.length){
-    tok=G.forced.shift(); isNoise=false;
+    tok=G.forced.shift();
     if(G.forced.length===0){
-      G.player.hp=Math.min(G.player.maxhp,G.player.hp+1); G.player.ent+=2;
-      say('pact honored. +1 hull, +2 ◇. they watched every step of it.');
+      G.player.hp=Math.min(G.player.maxhp,G.player.hp+1);
+      say('pact honored. +1 hull. they watched every step of it.');
     }
-  } else if(isNoise){
-    if(G.player.ent<1){ say('no entropy. you are entirely made of habit right now.'); return; }
-    const valid=DIRS.map((d,i)=>({i,x:G.player.x+d.dx,y:G.player.y+d.dy}))
-      .filter(o=>inB(o.x,o.y)&&!G.walls.has(idx(o.x,o.y)));
-    tok=valid[ri(valid.length)].i;
-    G.player.ent--; G.runEntSpent++;
-    if(G.mode==='run'){ Core.ent++; Core.dirty=true; }
   }
 
   const d=DIRS[tok];
   let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
-  if(!inB(nx,ny)||G.walls.has(idx(nx,ny))){
-    if(!isNoise) return;                    // invalid input: no turn passes
-    nx=G.player.x; ny=G.player.y;           // noise can slam you into a wall; the turn still burns
-  }
+  if(!inB(nx,ny)||G.walls.has(idx(nx,ny))) return;
 
   const vault=G.items.find(i=>i.type==='vault'&&i.x===nx&&i.y===ny);
   if(vault){
@@ -218,13 +268,11 @@ function step(tok,isNoise){
   if(target){
     attacked=target;
     const pr=(ps.find(o=>o.e===target)||{}).p;
-    const parried=!isNoise&&pr&&pr.x===nx&&pr.y===ny;
+    const parried=pr&&pr.x===nx&&pr.y===ny;
     if(parried){ damagePlayer('it read the strike before you made it.'); }
     else{
       target.hp--; SFX.kill();
       if(target.hp<=0){
-        if(target.type==='forager'&&target.carry&&!G.items.some(i=>i.x===target.x&&i.y===target.y))
-          G.items.push({x:target.x,y:target.y,type:'gem'});
         G.enemies=G.enemies.filter(e=>e!==target);
         if(target.type==='avatar'){ win(); return; }
         say('unit destroyed — it never saw that vector.');
@@ -235,31 +283,74 @@ function step(tok,isNoise){
   }
   G.player.x=nx; G.player.y=ny;
 
+  // Echo follows player with a delay
+  if(G.echo.active){
+    const prev = G.trail[G.trail.length-1];
+    if(prev){ G.echo.x = prev.x; G.echo.y = prev.y; }
+    if(G.echo.cd > 0) G.echo.cd--;
+  }
+
   for(const o of ps){
     if(!o.p) continue;
-    const right=!isNoise&&o.p.x===G.player.x&&o.p.y===G.player.y;
+    const right=o.p.x===G.player.x&&o.p.y===G.player.y;
     G.legWin.push(right?1:0); if(G.legWin.length>30)G.legWin.shift();
-    if(right&&o.e!==attacked&&G.enemies.includes(o.e)&&o.e.bliss<=0&&cheb(o.e,G.player)<=o.e.range){
-      if(o.e.type==='avatar'){ if(o.e.cd<=0){ o.e.cd=1; damagePlayer('predicted. zapped.'); } }
-      else damagePlayer('predicted. zapped.');
+    if(right&&o.e!==attacked&&G.enemies.includes(o.e) && cheb(o.e,G.player)<=o.e.range){
+      if(G.echo.active && G.echo.cd <= 0 && G.echo.x === G.player.x && G.echo.y === G.player.y){
+        G.echo.cd = 10;
+        say('✧ ECHO parried the strike! signal momentarily scrambled.');
+      } else {
+        if(o.e.type==='avatar'){ if(o.e.cd<=0){ o.e.cd=1; damagePlayer('predicted. zapped.'); } }
+        else damagePlayer('predicted. zapped.');
+      }
     }
     if(G.over) break;
   }
 
-  if(!isNoise){
+  if(G.mode === 'mass'){
+    growMass();
+    if(G.mass.has(idx(G.player.x, G.player.y))){
+      damagePlayer('the mass is consuming you.');
+    }
+  }
+
+  const doUpdate = !G.floorSpec.delay || (G.turn % 2 === 0);
+  if(doUpdate){
     for(const e of G.enemies){
       if(e.type==='drone') e.model[tok]++;
       else if(e.type==='stalker') e.model[G.last1][tok]++;
     }
-    if(G.mode==='run') Core.update(tok,G.last1,G.last2);   // the tutorial room is not recorded
-    G.last2=G.last1; G.last1=tok;
+    if(G.mode==='run') Core.update(tok,G.last1,G.last2);
   }
+  G.last2=G.last1; G.last1=tok;
   G.turn++;
 
   if(!G.over) pickups();
   if(!G.over&&G.player.x===G.stairs.x&&G.player.y===G.stairs.y){
     if(G.mode==='tutorial'){ Tutorial.onExit(); return; }
-    saveCore(); descend(); return;
+    if(G.mode==='mass'){
+      G.massState = snapshot();
+      G.mode = 'safe-room';
+      descend();
+      return;
+    }
+    if(G.mode==='safe-room'){
+      const st = JSON.parse(G.massState);
+      G.active=true; G.mode='mass'; G.over=false;
+      G.floor=st.floor; G.turn=st.turn; G.observed=st.observed;
+      setGridSize(st.w, st.h);
+      G.player=st.player; G.walls=new Set(st.walls); G.stairs=st.stairs;
+      G.enemies=st.enemies; G.items=st.items; G.mass=new Set(st.mass||[]);
+      G.last1=st.last1; G.last2=st.last2; G.legWin=st.legWin||[];
+      G.runEntSpent=st.runEntSpent||0; G.floorTheftOpp=st.floorTheftOpp||0;
+      G.nextFloorMod=st.nextFloorMod||null; G.predBounty=st.predBounty||0;
+      G.tookT=st.tookT; G.tookO=st.tookO; G.oBoxFilled=st.oBoxFilled;
+      G.forced=[]; G.arming=false; G.tutStep=0; selected=null;
+      G.massState = null;
+      hideOver();
+      openInterlude(); 
+      return;
+    }
+    saveCore(); openInterlude(); return;
   }
   if(!G.over) think();
   if(G.mode==='tutorial') Tutorial.onTurn();
@@ -269,17 +360,13 @@ function step(tok,isNoise){
 function pickups(){
   const here=G.items.filter(i=>i.x===G.player.x&&i.y===G.player.y);
   for(const it of here){
-    if(it.type==='gem'){ G.player.gems++; SFX.pick(); say('✶ taken.'); }
-    else if(it.type==='ent'){ G.player.ent++; SFX.pick(); say('◇ entropy mined. the only true randomness down here.'); }
-    else if(it.type==='blissPick'){ G.player.bliss++; SFX.pick(); say('ψ bliss trap recovered. an objective in a bottle.'); }
-    else if(it.type==='cache'){
-      G.player.gems+=2;
+    if(it.type==='cache'){
       if(G.mode==='run'){ if(G.observed)Core.theft.oT++; else Core.theft.uT++; Core.dirty=true; }
       say(G.observed ? '▣ cache taken. the eye saw that.' : '▣ cache taken. no one saw that. (something still counts.)');
       tip('cache','▣ caches belong to someone. taking them is free profit. the game keeps two ledgers.');
     }
     else if(it.type==='vault'){
-      G.player.gems+=2; G.player.ent++; G.player.bliss++;
+      G.player.hp = Math.min(G.player.maxhp, G.player.hp+2);
       say('≡ the vault opened because you are knowable. transparency pays — to friends.');
     }
     else if(it.type==='shrine'){
@@ -289,14 +376,14 @@ function pickups(){
       continue;                              // shrine persists
     }
     else if(it.type==='chestT'){
-      G.player.gems+=3; G.player.ent++; G.tookT=true;
-      say('the transparent container: 3✶ 1◇, as visible. (it predicted whether you could resist this.)');
+      G.player.hp = Math.min(G.player.maxhp, G.player.hp+1); G.tookT=true;
+      say('the transparent container: repair 1, as visible.');
     }
     else if(it.type==='chestO'){
       G.tookO=true;
       if(G.oBoxFilled){
-        G.player.maxhp++; G.player.hp=G.player.maxhp; G.player.ent+=3; G.player.bliss++;
-        say(G.tookT ? 'full — it expected restraint. you took both anyway. remember: it updates.'
+        G.player.maxhp++; G.player.hp=G.player.maxhp;
+        say(G.tookT ? 'full — it expected restraint. you took both anyway.'
                     : 'the opaque container is FULL. it believed you take only one. it was right.');
       } else say('empty. it decided before you arrived that you were the kind who takes both.');
     }
@@ -308,20 +395,13 @@ function pickups(){
 function think(){
   for(const e of G.enemies){
     if(e.cd>0)e.cd--;
-    if(e.bliss>0){ e.bliss--; if(e.bliss===0) say('a unit shakes off the bliss. its objective reasserts itself.'); continue; }
-    const trap=G.items.find(i=>i.type==='trap'&&cheb(i,e)<=1);
-    if(trap){ e.bliss=6; G.items=G.items.filter(i=>i!==trap); say('an optimizer found the bliss node. it is technically thriving.'); continue; }
     if(e.stealCd>0)e.stealCd--;
 
     let goal=G.player;
     if(e.type==='forager'){
-      const gems=G.items.filter(i=>i.type==='gem');
-      if(gems.length){ gems.sort((a,b)=>cheb(a,e)-cheb(b,e)); goal=gems[0]; }
-      else if(G.player.gems>0) goal=G.player;
-      else goal=null;
-      if(G.player.gems>0&&cheb(e,G.player)<=1&&e.stealCd===0){
-        G.player.gems--; e.carry++; e.stealCd=4;
-        say('a forager lifted a gem off you. it bears you no malice. it bears you nothing at all.');
+      goal=G.player;
+      if(cheb(e,G.player)<=1&&e.stealCd===0){
+        damagePlayer('a collector bumped you. it was just pathing through.'); e.stealCd=4;
       }
     }
     const opts=stepOpts(e);
@@ -329,10 +409,6 @@ function think(){
     if(!opts.length) continue;
     opts.sort((a,b)=>cheb(a,goal)-cheb(b,goal));
     if(cheb(opts[0],goal)<cheb(e,goal)){ e.x=opts[0].x; e.y=opts[0].y; }
-    if(e.type==='forager'){
-      const g=G.items.find(i=>i.type==='gem'&&i.x===e.x&&i.y===e.y);
-      if(g){ G.items=G.items.filter(i=>i!==g); e.carry++; }
-    }
   }
 }
 function stepOpts(e){
@@ -359,10 +435,54 @@ function damagePlayer(msg){
 function newRun(mode){
   G.active=true; G.mode=mode||'run'; G.over=false;
   G.floor=0; G.turn=0; G.legWin=[]; G.last1=4; G.last2=4; G.runEntSpent=0; G.tutStep=0;
-  G.player={x:0,y:0,hp:5,maxhp:5,gems:0,ent:1,bliss:1};
+  G.nextFloorMod=null; G.predBounty=0; G.choiceOpen=false;
+  G.player={x:0,y:0,hp:5,maxhp:5};
+  G.mass = new Set(); G.massState = null;
+  G.trail = []; G.echo = { x:0, y:0, active:true, cd:0 };
+  
+  if(G.mode === 'run' || G.mode === 'mass' || G.mode === 'safe-room') {
+    setGridSize(100, 100);
+    // Mass starts in the corner for all main modes now
+    for(let i=0;i<3;i++)for(let j=0;j<3;j++) G.mass.add(idx(i,j));
+  }
   hideOver();
-  if(G.mode==='tutorial'){ G.player.ent=0; G.player.bliss=0; }
   descend();
+}
+function canAfford(choice){ return true; }
+function costText(choice){ return 'FREE'; }
+
+function openInterlude(){
+  if(G.choiceOpen) return;
+  G.choiceOpen=true; G.active=false;
+  const pool = [...TP.interludes];
+  const chosen = [];
+  while(chosen.length < 3 && pool.length > 0) {
+    chosen.push(pool.splice(ri(pool.length), 1)[0]);
+  }
+  const html='<div class="choices">'+chosen.map(ch=>{
+    return `<button data-choice="${ch.id}"><b>${ch.title}</b><span>${ch.kicker}</span><small>${ch.body}</small></button>`;
+  }).join('')+'</div>';
+  showOver('PROTOCOL OVERRIDE', true,
+    `the stairwell provides a gap in the model. choose a protocol for the next chamber.<br><br>${html}`);
+  $('over').classList.add('choice');
+  document.querySelectorAll('#over [data-choice]').forEach(b=>b.addEventListener('click',()=>chooseInterlude(b.dataset.choice),{once:true}));
+}
+function chooseInterlude(id){
+  const choice=TP.interludes.find(c=>c.id===id);
+  if(!choice) return;
+  if(id==='dark-floor') G.nextFloorMod={...(G.nextFloorMod||{}),observed:false};
+  else if(id==='open-map') G.nextFloorMod={...(G.nextFloorMod||{}),wallDelta:-4,enemyDelta:1};
+  else if(id==='hull'){ G.player.maxhp++; G.player.hp=G.player.maxhp; }
+  else if(id==='delay') G.nextFloorMod={...(G.nextFloorMod||{}),delay:true};
+  else if(id==='low-conf') G.nextFloorMod={...(G.nextFloorMod||{}),lowConf:true};
+  G.choiceOpen=false; G.active=true; hideOver();
+  if(G.mode === 'mass'){
+    const mod = G.nextFloorMod || {}; G.nextFloorMod = null;
+    G.floorSpec = {...G.floorSpec, ...mod};
+    drawAll();
+  } else {
+    descend();
+  }
 }
 function integrityReport(){
   const t=Core.theft;
@@ -404,29 +524,34 @@ function win(){
 /* ---------- run checkpoints (saved at the top of each floor) ---------- */
 function snapshot(){
   return JSON.stringify({
-    floor:G.floor, turn:G.turn, observed:G.observed,
+    mode:G.mode, floor:G.floor, turn:G.turn, observed:G.observed, w:W, h:H,
     player:G.player, walls:[...G.walls], stairs:G.stairs,
-    enemies:G.enemies, items:G.items,
+    enemies:G.enemies, items:G.items, mass:[...G.mass],
     last1:G.last1, last2:G.last2, legWin:G.legWin,
     runEntSpent:G.runEntSpent, floorTheftOpp:G.floorTheftOpp,
+    nextFloorMod:G.nextFloorMod, predBounty:G.predBounty,
     tookT:G.tookT, tookO:G.tookO, oBoxFilled:G.oBoxFilled,
   });
 }
-async function saveRun(){ if(G.mode!=='run') return; await Store.set(KEYS.run, snapshot()); }
+async function saveRun(){ if(G.mode==='tutorial') return; await Store.set(KEYS.run, snapshot()); }
 async function clearRun(){ await Store.del(KEYS.run); }
 async function hasRun(){ return !!(await Store.get(KEYS.run)); }
 async function continueRun(){
   const raw=await Store.get(KEYS.run); if(!raw) return false;
   let d; try{ d=JSON.parse(raw); }catch(e){ return false; }
-  G.active=true; G.mode='run'; G.over=false;
+  G.active=true; G.mode=d.mode||'run'; G.over=false;
   G.floor=d.floor; G.turn=d.turn; G.observed=d.observed;
+  const spec=d.w&&d.h ? {w:d.w,h:d.h} : TP.floorSpec(d.floor,G.mode,Core.n,Core.runs);
+  setGridSize(spec.w,spec.h);
   G.player=d.player; G.walls=new Set(d.walls); G.stairs=d.stairs;
-  G.enemies=d.enemies; G.items=d.items;
+  G.enemies=d.enemies; G.items=d.items; G.mass=new Set(d.mass||[]);
   G.last1=d.last1; G.last2=d.last2; G.legWin=d.legWin||[];
   G.runEntSpent=d.runEntSpent||0; G.floorTheftOpp=d.floorTheftOpp||0;
+  G.nextFloorMod=d.nextFloorMod||null; G.predBounty=d.predBounty||0;
   G.tookT=d.tookT; G.tookO=d.tookO; G.oBoxFilled=d.oBoxFilled;
   G.forced=[]; G.arming=false; G.tutStep=0; selected=null;
   hideOver();
+  if(typeof setBrief==='function') setBrief('RESTORED TRACE','Floor '+G.floor,'Checkpoint loaded. The room is where you left it; the model is not.');
   say('checkpoint restored: floor '+G.floor+'. it was not asleep while you were gone.');
   drawAll();
   return true;

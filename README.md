@@ -24,12 +24,11 @@ First time: take **CALIBRATION** from the menu — five short sandboxed rooms (~
 |---|---|
 | Arrows / WASD / swipe | move (moving into a unit attacks it) |
 | Space / `.` / tap @ | wait |
-| `N` | noise move — spend 1◇ entropy on a truly random, unlearnable move |
-| `B` | arm a ψ bliss trap (wirehead a nearby optimizer) |
-| `G` | drop a ✶ gem (bait for foragers) |
 | Tap a unit | probe its objective and model |
 | `Esc` | menu / resume |
 | `R` (when dead) | run again |
+
+• Between floors: choose a **PROTOCOL** to override station logic.
 
 ## Reading the board
 
