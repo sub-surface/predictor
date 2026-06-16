@@ -377,6 +377,14 @@ header h1 b{color:var(--attn);font-weight:700}
   transition:opacity .15s;
   mix-blend-mode:screen;
 }
+.cell.locked {
+  animation: cellPulse 2.5s infinite ease-in-out;
+}
+@keyframes cellPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
 .cell.locked::after{
   content:"";
   position:absolute;
@@ -420,8 +428,13 @@ header h1 b{color:var(--attn);font-weight:700}
 .cachec{color:var(--gem);opacity:.9}
 .gatec{color:var(--cool)}
 .shrc{color:var(--attn)}
-.mass{background:var(--attn);color:var(--ink);opacity:.8;animation:pulse 2s infinite}
+.mass{background:var(--attn);color:var(--ink);opacity:.8;animation:pulse 2s infinite, massHue 6s infinite ease-in-out}
 @keyframes pulse{0%{opacity:.6}50%{opacity:.9}100%{opacity:.6}}
+@keyframes massHue {
+  0% { filter: hue-rotate(0deg); }
+  50% { filter: hue-rotate(15deg); }
+  100% { filter: hue-rotate(0deg); }
+}
 
 .ghost{color:var(--pale);filter:blur(1px);transition:opacity .3s}
 .echo{color:var(--cool);animation:echo-pulse 1.5s infinite;z-index:10}

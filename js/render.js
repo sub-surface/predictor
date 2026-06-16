@@ -9,6 +9,7 @@ const ITEMG={gem:['✶','gemc'],ent:['◇','entc'],blissPick:['ψ','blc'],cache:
 
 if(typeof TP!=='undefined'&&TP.glyph&&TP.glyph.item) Object.assign(ITEMG, TP.glyph.item);
 
+const VW=25, VH=25;
 let newsIdx = 0, lastNews = 0, particles = [];
 
 function buildBoard(){
@@ -19,60 +20,30 @@ function buildBoard(){
   resizeBoard();
   for(let i=0;i<VW*VH;i++){
     const c=document.createElement('div'); c.className='cell'; c.dataset.i=i;
-    c.innerHTML='<div class="stain"></div><span class="glyph"></span>';
-    board.appendChild(c); cells.push(c);
+    
+    const stain=document.createElement('div'); stain.className='stain';
+    const glyph=document.createElement('span'); glyph.className='glyph';
+    const hpdots=document.createElement('div'); hpdots.className='hpdots';
+    
+    c.appendChild(stain);
+    c.appendChild(glyph);
+    c.appendChild(hpdots);
+    
+    board.appendChild(c);
+    cells.push({
+      el: c,
+      stain: stain,
+      glyph: glyph,
+      hpdots: hpdots
+    });
   }
 
-  // Create particle layer
+  // Create canvas particle layer
   if(!$('particles')){
-    const p = document.createElement('div'); p.id = 'particles';
+    const p = document.createElement('canvas'); p.id = 'particles';
     p.style.position = 'absolute'; p.style.inset = '0'; p.style.pointerEvents = 'none'; p.style.zIndex = '5';
     $('stage').appendChild(p);
   }
-
-  requestAnimationFrame(tick);
-}
-
-
-function tick(t){
-  if(!G.active || G.over) return requestAnimationFrame(tick);
-  
-  // News Ticker Permuter
-  if(t - lastNews > 8000){
-    newsIdx = (newsIdx + 1) % TP.newsTicker.length;
-    if($('news-ticker')) $('news-ticker').textContent = TP.newsTicker[newsIdx];
-    lastNews = t;
-  }
-
-  // Realtime pulses
-  const s = Math.sin(t/400) * 0.1;
-  document.querySelectorAll('.cell.locked').forEach(c => {
-    c.style.transform = `scale(${1 + s})`;
-  });
-  
-  document.querySelectorAll('.mass').forEach(c => {
-    c.style.filter = `hue-rotate(${Math.sin(t/1000) * 15}deg)`;
-  });
-
-  // Drifting Particles
-  if(Math.random() < 0.08 && particles.length < 30){
-    const p = document.createElement('div');
-    p.textContent = ri(2) ? '0' : '1';
-    p.style.position = 'absolute';
-    p.style.left = ri(100) + '%';
-    p.style.top = '105%';
-    p.style.fontSize = '10px';
-    p.style.color = 'var(--line-strong)';
-    p.style.opacity = '0.3';
-    p.style.fontFamily = 'monospace';
-    if($('particles')) $('particles').appendChild(p);
-    particles.push({el:p, x:ri(100), y:105, vel: 0.05 + Math.random()*0.15});
-  }
-  particles.forEach((p,i) => {
-    p.y -= p.vel;
-    p.el.style.top = p.y + '%';
-    if(p.y < -10){ p.el.remove(); particles.splice(i,1); }
-  });
 
   requestAnimationFrame(tick);
 }
@@ -82,7 +53,6 @@ function resizeBoard(){
   document.documentElement.style.setProperty('--cs',cs+'px');
 }
 
-/* ... existing say, setBrief, showOver, hideOver ... */
 function say(t){
   msgOld=$('logNew').textContent;
   $('logNew').textContent=t;
@@ -103,11 +73,20 @@ function showOver(title,good,html){
 }
 function hideOver(){ $('over').classList.remove('show','choice'); }
 
-let newsIdx = 0, lastNews = 0;
-
 function drawAll(){
-  const ps=G.enemies.map(e=>({e,p:predict(e)}));
-  turnPreds=ps;
+  // Sort active predictive enemies by Chebyshev proximity
+  const activePredictors = G.enemies
+    .filter(e => e.type !== 'forager' && e.bliss <= 0)
+    .map(e => ({ e, dist: cheb(e, G.player) }))
+    .sort((a, b) => a.dist - b.dist);
+
+  const allowedPredictors = activePredictors.slice(0, 2).map(o => o.e);
+
+  const ps = G.enemies.map(e => {
+    if (!allowedPredictors.includes(e)) return { e, p: null };
+    return { e, p: predict(e) };
+  });
+  turnPreds = ps;
   let best=null;
   for(const o of ps) if(o.p&&(!best||o.p.conf>best.p.conf)) best=o;
 
@@ -116,11 +95,19 @@ function drawAll(){
 
   for(let vy=0;vy<VH;vy++)for(let vx=0;vx<VW;vx++){
     const x = camX + vx, y = camY + vy;
-    const c=cells[vy*VW+vx], g=c.querySelector('.glyph'), s=c.querySelector('.stain');
-    c.className='cell'; g.className='glyph'; g.textContent=''; s.style.opacity=0;
-    const old=c.querySelector('.hpdots'); if(old)old.remove();
-    g.style.opacity = 1; // Reset opacity from habit/echo logic
-    g.style.transform = ''; // Reset transform
+    const cellObj = cells[vy*VW+vx];
+    const c = cellObj.el;
+    const g = cellObj.glyph;
+    const s = cellObj.stain;
+    const hd = cellObj.hpdots;
+
+    c.className='cell';
+    g.className='glyph';
+    g.textContent='';
+    g.style.opacity = 1;
+    g.style.transform = '';
+    s.style.opacity=0;
+    hd.textContent='';
 
     if(!inB(x,y)){ c.classList.add('wall'); continue; }
     if(G.walls.has(idx(x,y))){ c.classList.add('wall'); continue; }
@@ -135,7 +122,7 @@ function drawAll(){
       g.textContent=e.type==='avatar'?'Ω':e.type==='hive'?'H':e.type==='stalker'?'S':e.type==='forager'?'f':'d';
       g.classList.add('foe'); if(e.type==='avatar')g.classList.add('big');
       if(e.bliss>0)g.classList.add('blissed');
-      if(e.hp>1){ const hd=document.createElement('div'); hd.className='hpdots'; hd.textContent='•'.repeat(e.hp); c.appendChild(hd); }
+      if(e.hp>1){ hd.textContent='•'.repeat(e.hp); }
       if(e===selected)c.classList.add('sel');
       const info=TP.glyph.enemy[e.type];
       if(info){ g.textContent=info.char; g.classList.add(info.cls); c.title=info.name; }
@@ -273,22 +260,49 @@ function tick(t){
   if(!G.active || G.over) return requestAnimationFrame(tick);
 
   // News Ticker Permuter
-  if(t - lastNews > 6000){
+  if(t - lastNews > 8000){
     newsIdx = (newsIdx + 1) % TP.newsTicker.length;
-    $('news-ticker').textContent = TP.newsTicker[newsIdx];
+    if($('news-ticker')) $('news-ticker').textContent = TP.newsTicker[newsIdx];
     lastNews = t;
   }
 
-  // Realtime pulses
-  const s = Math.sin(t/400) * 0.1;
-  document.querySelectorAll('.cell.locked').forEach(c => {
-    c.style.transform = `scale(${1 + s})`;
-  });
+  // Drifting Particles (Canvas implementation)
+  const canvas = $('particles');
+  if(canvas){
+    const ctx = canvas.getContext('2d');
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if(canvas.width !== w || canvas.height !== h){
+      canvas.width = w;
+      canvas.height = h;
+    }
+    ctx.clearRect(0,0,w,h);
 
-  document.querySelectorAll('.mass').forEach(c => {
-    c.style.filter = `hue-rotate(${Math.sin(t/1000) * 15}deg)`;
-  });
+    if(Math.random() < 0.08 && particles.length < 30){
+      particles.push({
+        char: ri(2) ? '0' : '1',
+        xPercent: ri(100),
+        yPercent: 105,
+        vel: 0.05 + Math.random()*0.15
+      });
+    }
+
+    ctx.fillStyle = 'rgba(91, 90, 86, 0.3)'; // var(--line-strong) with 0.3 opacity
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+
+    for(let i = particles.length - 1; i >= 0; i--){
+      const p = particles[i];
+      p.yPercent -= p.vel;
+      if(p.yPercent < -10){
+        particles.splice(i, 1);
+        continue;
+      }
+      const px = (p.xPercent / 100) * w;
+      const py = (p.yPercent / 100) * h;
+      ctx.fillText(p.char, px, py);
+    }
+  }
 
   requestAnimationFrame(tick);
 }
-

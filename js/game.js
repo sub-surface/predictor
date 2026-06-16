@@ -397,11 +397,28 @@ function think(){
     if(e.cd>0)e.cd--;
     if(e.stealCd>0)e.stealCd--;
 
+    // Standard enemies only move every other turn (and alternate phases via random turnOffset)
+    if(e.type !== 'avatar' && e.type !== 'hive'){
+      if(e.turnOffset === undefined) e.turnOffset = ri(2);
+      if((G.turn + e.turnOffset) % 2 !== 0) continue;
+    }
+
     let goal=G.player;
     if(e.type==='forager'){
-      goal=G.player;
       if(cheb(e,G.player)<=1&&e.stealCd===0){
         damagePlayer('a collector bumped you. it was just pathing through.'); e.stealCd=4;
+      }
+      const items = G.items;
+      if(items.length){
+        let closest = items[0];
+        let minDist = cheb(e, closest);
+        for(let i=1; i<items.length; i++){
+          let d = cheb(e, items[i]);
+          if(d < minDist){ minDist = d; closest = items[i]; }
+        }
+        goal = closest;
+      } else {
+        goal = null;
       }
     }
     const opts=stepOpts(e);
