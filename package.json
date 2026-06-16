@@ -1,0 +1,14 @@
+{
+  "name": "predictor",
+  "version": "1.0.0",
+  "description": "A roguelike where the antagonist is trained on you.",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.100.0"
+  }
+}
