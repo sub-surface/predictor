@@ -20,10 +20,18 @@ function bindInput(){
     const map={ArrowLeft:0,a:0,ArrowUp:1,w:1,ArrowRight:2,d:2,ArrowDown:3,s:3,' ':4,'.':4};
     if(e.key in map){ e.preventDefault(); doMove(map[e.key]); }
     else if(e.key==='m'||e.key==='M'){ Menu.toggleSound(); }
+    else if(e.key==='n'||e.key==='N'){ e.preventDefault(); doNoise(); }
+    else if(e.key==='b'||e.key==='B'){ e.preventDefault(); armBliss(); }
+    else if(e.key==='c'||e.key==='C'){ e.preventDefault(); doContract(); }
+    else if(e.key==='o'||e.key==='O'){ e.preventDefault(); doOffswitch(); }
   });
 
   document.querySelectorAll('#pad button[data-d]').forEach(b=>b.addEventListener('click',()=>{ if(!Menu.open)doMove(+b.dataset.d); }));
   $('aMenu').addEventListener('click',()=>Menu.show('home'));
+  $('btnNoise').addEventListener('click',()=>{ if(!Menu.open)doNoise(); });
+  $('btnBliss').addEventListener('click',()=>{ if(!Menu.open)armBliss(); });
+  $('btnContract').addEventListener('click',()=>{ if(!Menu.open)doContract(); });
+  $('btnOffswitch').addEventListener('click',()=>{ if(!Menu.open)doOffswitch(); });
 
   let t0=null;
   const board=$('board');
@@ -34,7 +42,10 @@ function bindInput(){
     const tap=Math.abs(dx)<16&&Math.abs(dy)<16; t0=null;
     if(tap){
       const cell=e.target.closest('.cell'); if(!cell)return;
-      const i=+cell.dataset.i, x=i%W, y=(i-x)/W;
+      const vi=+cell.dataset.i, vx=vi%VW, vy=(vi-vx)/VW;
+      const camX = Math.max(0, Math.min(W - VW, G.player.x - Math.floor(VW / 2)));
+      const camY = Math.max(0, Math.min(H - VH, G.player.y - Math.floor(VH / 2)));
+      const x=camX+vx, y=camY+vy;
       const en=G.enemies.find(e=>e.x===x&&e.y===y);
       if(en){ selected=en; say('probe: '+en.obj); drawAll(); return; }
       if(x===G.player.x&&y===G.player.y){ doMove(4); return; }
@@ -66,6 +77,8 @@ function bindInput(){
   $('coreWipe').addEventListener('click',()=>Menu.wipe());
   $('sSoundBtn').addEventListener('click',()=>Menu.toggleSound());
   $('sFlashBtn').addEventListener('click',()=>Menu.toggleFlash());
+  $('sCbBtn').addEventListener('click',()=>Menu.toggleCb());
   $('sTips').addEventListener('click',()=>Menu.resetTips());
+  $('sExportBtn').addEventListener('click',()=>Menu.exportLog());
   $('mAbandon').addEventListener('click',()=>Menu.abandon());
 }

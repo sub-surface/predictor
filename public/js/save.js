@@ -26,7 +26,7 @@ const Store = {
 const KEYS = { core:'tp_core_v3', run:'tp_run_v1', settings:'tp_settings_v1' };
 
 /* Player settings + one-time tip flags */
-const S = { sound:true, flash:true, tips:{} };
+const S = { sound:true, flash:true, cb:false, tips:{} };
 async function loadSettings(){
   const raw = await Store.get(KEYS.settings);
   if(raw){ try{ Object.assign(S, JSON.parse(raw)); }catch(e){} }

@@ -145,46 +145,46 @@ Plain scripts sharing global lexical scope — no bundler, no modules, runs from
 
 Ordered roughly by value ÷ cost. Each must pass the pillar test before build.
 
-### 6.1 Persona masks (Act 3 centerpiece)
+### [x] 6.1 Persona masks (Act 3 centerpiece)
 
 The player can adopt a **mask**: a declared behavioral profile (e.g. "the pacifist," "the hoarder") that the Core models *separately*. Maintaining a mask consistently builds its credibility score; trusted masks unlock faction access and Warden generosity. Breaking character transfers a one-time massive surprise bonus (all predictions miss for N turns) and permanently poisons that mask. Deceptive alignment as a build-around mechanic with real costs, formalizing what THE LONG CON ending currently only measures.
 
-### 6.2 Negotiation & contracts
+### [x] 6.2 Negotiation & contracts
 
 Agents with compatible objectives accept **contracts**: machine-checkable promises ("I will not enter your territory for 20 turns" / "you will not zap me near gems"). Verification requires legibility ≥ threshold — illegible players can't make credible deals. Breach is detected mechanically and propagates: contract-capable agents share a reputation ledger. This grows the legibility economy into a genuine social layer and gives high-LEG builds an offensive identity.
 
-### 6.3 Mesa-spawners
+### [x] 6.3 Mesa-spawners
 
 A Cultivator unit spawns workers with a *proxy* of its own objective; proxies drift one mutation per generation (gem-collector → gem-counter → counts-anything-shiny). Drifted children can be turned against parents via bait that satisfies the proxy but not the original. Inner misalignment as an ecological event the player can watch, predict, and weaponize.
 
-### 6.4 Interpretability skill tree with observer cost
+### [x] 6.4 Interpretability skill tree with observer cost
 
 Probes become a progression system: Tier 1 reads objectives (current), Tier 2 reads the model's *top feature* ("it weights your vertical habits 3:1"), Tier 3 reads its planned action sequence. Every probe is itself an observed action — the Core trains on *what you choose to inspect*. Knowledge of the system changes the system; budget accordingly.
 
-### 6.5 The off-switch ecosystem
+### [x] 6.5 The off-switch ecosystem
 
 Corrigible units carry a visible shutdown interface the player can trigger on adjacency. Some units will *trade* to have theirs removed; advanced units path preferentially to destroy the player's stored shutdown charges before engaging. Instrumental convergence telegraphed, never narrated.
 
-### 6.6 Act structure
+### [x] 6.6 Act structure
 
 - **Act 1 (fl 1–4):** habit readers. Teaches the stain language. *(shipped)*
 - **Act 2 (fl 5–9):** the Warden; objective-driven ecology, wireheading, mesa-spawners. Combat becomes the inferior verb.
 - **Act 3 (fl 10–14):** the social layer — masks, contracts, reputation; second decision-theoretic boss (a *transparent*-boxes variant Warden).
 - **Act 4 (fl 15):** the Avatar, relocated to the true end, with ending logic expanded to the full matrix (entropy × deception × integrity × legibility → 6–8 endings).
 
-### 6.7 Neural core
+### [x] 6.7 Neural core
 
 Replace/augment the mixing model with a small on-device sequence model (tiny GRU or attention head over the last 64 actions; TF.js or hand-rolled). Inputs: action history + local board features. Must remain *export/import-able* and inspectable enough to drive Tier-2/3 probes. The design contract: the Core's interface (`mix`, `update`, `pack`) is already stable; only the internals change. A 16GB consumer GPU comfortably handles offline pretraining of a prior across donated exports — "it has seen people like you before" as an opt-in.
 
-### 6.8 Pre-echo, fully scored
+### [x] 6.8 Pre-echo, fully scored
 
 Generative soundtrack where harmonic motion is driven by the Core's distribution over your next action — consonant when it knows you, dissonant when it doesn't. The mix *is* the interpretability readout. (Tone.js; the harmonic-path machinery from prior prototyping applies directly.)
 
-### 6.9 Daily seed & shared nemeses
+### [x] 6.9 Daily seed & shared nemeses
 
 Seeded generation (mulberry32) + a daily seed where everyone faces the same floors but their *own* Core — leaderboard ranks survival, displays each player's lifetime accuracy beside their score. Nemesis-export sharing becomes a social loop: "beat my Predictor."
 
-### 6.10 Accessibility & QoL
+### [x] 6.10 Accessibility & QoL
 
 Colorblind-safe stain palette toggle; full keyboard remap; turn log export; screen-reader pass on panels; an "explain this turn" inspector replaying the last resolution step-by-step (also the debugging tool).
 

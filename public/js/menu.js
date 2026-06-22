@@ -58,13 +58,27 @@ const Menu = {
   resume(){ this.hide(); },
   async abandon(){
     if(!confirm('Abandon this run? The floor checkpoint will be erased. It keeps what it learned.'))return;
-    G.active=false; G.over=true; await clearRun(); this.show('home');
+    G.active=false; G.over=true; await clearRun(); 
+    if (typeof Music !== 'undefined') Music.stop();
+    this.show('home');
   },
   afterTutorial(){ /* end-screen buttons route via over overlay */ },
 
   toggleSound(){ S.sound=!S.sound; saveSettings(); $('sSound').textContent=S.sound?'ON':'OFF'; },
   toggleFlash(){ S.flash=!S.flash; saveSettings(); $('sFlash').textContent=S.flash?'ON':'OFF'; },
+  toggleCb(){ S.cb=!S.cb; saveSettings(); $('sCb').textContent=S.cb?'ON':'OFF'; document.body.classList.toggle('colorblind', S.cb); },
   async resetTips(){ S.tips={}; await saveSettings(); say2('setMsg','contextual tips will appear again.'); },
+  exportLog(){
+    const data = JSON.stringify(Core, null, 2);
+    const blob = new Blob([data], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'predictor-core-export.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    say2('setMsg', 'core memory exported.');
+  }
 };
 
 function say2(id,t){ $(id).textContent=t; }

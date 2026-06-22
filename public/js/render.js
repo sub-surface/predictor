@@ -9,10 +9,12 @@ const ITEMG={gem:['✶','gemc'],ent:['◇','entc'],blissPick:['ψ','blc'],cache:
 
 if(typeof TP!=='undefined'&&TP.glyph&&TP.glyph.item) Object.assign(ITEMG, TP.glyph.item);
 
-const VW=25, VH=25;
+let VW=25, VH=25;
 let newsIdx = 0, lastNews = 0, particles = [];
 
 function buildBoard(){
+  VW = Math.min(W, 25);
+  VH = Math.min(H, 25);
   const board=$('board');
   board.replaceChildren();
   cells=[];
@@ -57,6 +59,12 @@ function say(t){
   msgOld=$('logNew').textContent;
   $('logNew').textContent=t;
   $('logOld').textContent=msgOld;
+}
+
+function clearLog(){
+  msgOld='';
+  $('logNew').textContent='';
+  $('logOld').textContent='';
 }
 
 function setBrief(kicker,title,body){
@@ -161,6 +169,10 @@ function drawAll(){
   const lp=legPct(); $('hLeg').textContent=lp===null?'—':lp+'%';
   $('hEye').textContent=G.observed?'◉':'○';
   $('hEyeWrap').style.opacity=G.observed?1:.45;
+  $('hEnt').textContent=G.player.ent || 0;
+  $('hGems').textContent=G.player.gems || 0;
+  $('hBliss').textContent=G.player.bliss || 0;
+  $('hOffswitches').textContent = G.player.offswitches || 0;
 
   /* dossier panel */
   let dos = `<b>ACTIVE PROTOCOLS:</b><br>`;
@@ -185,10 +197,30 @@ function drawAll(){
       hive: 'A direct uplink to the persistent Core. It uses every run you have ever finished against you.',
       forager: 'A resource-gathering automaton. It is indifferent to your presence, which makes it dangerous.',
       avatar: 'The physical manifestation of the Predictor. Every weight and bias given a hand and a zap range.',
+      cultivator: 'Mesa-spawner. Avoids you, generates flawed copies of itself.',
+      worker: 'Cultivator proxy. Collects gems, but mutations can redirect it to hunt you.'
     };
     dos += `<br><b>UNIT CASE FILE:</b><br>`;
     dos += `· TYPE: ${show.type.toUpperCase()}<br>`;
     dos += `· INTENT: ${bios[show.type] || 'Unknown'}<br>`;
+    
+    // Interpretability Probes
+    const tier = G.player.probeTier || 1;
+    if (tier >= 2 && show.type !== 'forager' && show.type !== 'cultivator' && show.type !== 'worker') {
+      dos += `<br><b>[TIER 2 PROBE] TOP FEATURE:</b><br>`;
+      const d=predRowOf(show);
+      if (d) {
+        const mx=Math.max(...d);
+        const topIdx = d.findIndex(v=>v===mx);
+        dos += `· Heaviest bias: ${['Left','Up','Right','Down','Wait'][topIdx]} (${Math.round(mx*100)}%)<br>`;
+      }
+    }
+    if (tier >= 3 && show.type !== 'forager' && show.type !== 'cultivator' && show.type !== 'worker') {
+      dos += `<br><b>[TIER 3 PROBE] PATHING:</b><br>`;
+      const p = predict(show);
+      if (p) dos += `· Locked destination: [${p.x}, ${p.y}]<br>`;
+      else dos += `· No valid target<br>`;
+    }
   }
 
   dos += `<br><b>CORE STATUS:</b><br>`;
@@ -205,7 +237,7 @@ function drawAll(){
   if(!show&&G.enemies.length) show=G.enemies[0];
   const fills=document.querySelectorAll('#bars .fill'), barEls=document.querySelectorAll('#bars .bar');
   if(show){
-    const names={drone:'DRONE',stalker:'STALKER',hive:'HIVE (core-linked)',forager:'FORAGER',avatar:'Ω THE PREDICTOR'};
+    const names={drone:'DRONE',stalker:'STALKER',hive:'HIVE (core-linked)',forager:'FORAGER',avatar:'Ω THE PREDICTOR',cultivator:'MESA-SPAWNER',worker:'PROXY'};
     $('modelWho').textContent=names[show.type]+(show.bliss>0?' — blissed':'');
     $('objline').innerHTML='objective: <b>'+show.obj+'</b>'+(show.range?' · zap range '+(show.range>10?'∞':show.range):'');
     const d=predRowOf(show);
@@ -251,8 +283,8 @@ function updateNotifications(){
   let html = '';
   if(G.echo.active) html += `<div class="notif"><b>ECHO:</b> online. parry ${G.echo.cd > 0 ? 'recharging ('+G.echo.cd+')' : 'READY'}</div>`;
   if(G.mode === 'mass') html += `<div class="notif"><b>SURVIVAL:</b> the mass is ${Math.round(100 * G.mass.size / (W*H))}% world-dense</div>`;
-  if(G.floorSpec.delay) html += `<div class="notif"><b>SIGNAL:</b> lag protocol active</div>`;
-  if(G.floorSpec.lowConf) html += `<div class="notif"><b>SIGNAL:</b> dither protocol active</div>`;
+  if(G.floorSpec && G.floorSpec.delay) html += `<div class="notif"><b>SIGNAL:</b> lag protocol active</div>`;
+  if(G.floorSpec && G.floorSpec.lowConf) html += `<div class="notif"><b>SIGNAL:</b> dither protocol active</div>`;
   area.innerHTML = html;
 }
 

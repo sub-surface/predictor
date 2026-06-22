@@ -2,15 +2,16 @@
 /* Run state and the turn engine. G holds everything serializable. */
 let W=9, H=9;
 const DIRS=[{dx:-1,dy:0},{dx:0,dy:-1},{dx:1,dy:0},{dx:0,dy:1},{dx:0,dy:0}];
+const rng = RNG.next.bind(RNG);
+const ri = RNG.ri.bind(RNG);
 const idx=(x,y)=>y*W+x, inB=(x,y)=>x>=0&&x<W&&y>=0&&y<H;
 const cheb=(a,b)=>Math.max(Math.abs(a.x-b.x),Math.abs(a.y-b.y));
-const ri=n=>Math.floor(Math.random()*n);
 
 const G = {
   active:false, mode:'run', over:false,
   floor:0, turn:0, observed:true,
   player:null, walls:new Set(), stairs:null, enemies:[], items:[],
-  last1:4, last2:4, legWin:[], runEntSpent:0,
+  last1:4, last2:4, last3:4, legWin:[], runEntSpent:0,
   floorTheftOpp:0, tookT:false, tookO:false, oBoxFilled:false,
   forced:[], arming:false, choiceOpen:false,
   tutStep:0, floorSpec:null, nextFloorMod:null, predBounty:0,
@@ -79,12 +80,16 @@ function mkEnemy(type,p){
   if(type==='hive')    Object.assign(base,{hp:2,range:3,obj:'ZAP @ — reads from THE PREDICTOR itself'});
   if(type==='forager') Object.assign(base,{obj:'COLLECT ✶ — does not care about you. exploitable.'});
   if(type==='avatar')  Object.assign(base,{hp:4,range:99,obj:'MODEL @ — the core, embodied. whole-room range, fires every other turn.'});
+  if(type==='cultivator') Object.assign(base,{hp:2,range:0,cd:15,obj:'SPAWN WORKER — creates copies with proxy objectives.'});
+  if(type==='worker')  Object.assign(base,{range:0,mutated:false,obj:'COLLECT ✶ — cultivator proxy.'});
   const lore={
     drone:'LOCAL READER - counts raw habits',
     stalker:'SEQUENCER - learns what follows what',
     hive:'RELAY - reads from THE PREDICTOR itself',
     forager:'COLLECTOR - wants signal-gems, not you',
-    avatar:'THE PREDICTOR - the Core embodied'
+    avatar:'THE PREDICTOR - the Core embodied',
+    cultivator:'MESA-SPAWNER - builds imperfect copies of itself',
+    worker:'PROXY - spawned by cultivator. objectives may drift.'
   };
   if(lore[type]) base.obj=lore[type];
   return base;
@@ -113,65 +118,85 @@ function descend(){
   G.nextFloorMod=null;
   G.floorSpec={...spec, ...mod};
 
-  if(G.mode === 'run' || G.mode === 'mass'){
-    setGridSize(100, 100);
-  } else if(G.mode === 'safe-room'){
+  if(G.mode === 'safe-room'){
     setGridSize(7, 7);
   } else {
     setGridSize(spec.w,spec.h);
   }
 
   G.player.hp=Math.min(G.player.maxhp, G.player.hp+1);
-  G.observed=mod.observed!==undefined ? mod.observed : (spec.observed===null ? Math.random()<0.6 : spec.observed);
+  G.observed=mod.observed!==undefined ? mod.observed : (spec.observed===null ? rng()<0.6 : spec.observed);
   G.tookT=G.tookO=false; G.oBoxFilled=false;
   G.forced=[]; G.arming=false; G.items=[]; G.enemies=[]; G.stairs=null; selected=null;
 
   if(G.mode==='tutorial'){ Tutorial.build(); drawAll(); return; }
 
   let ok=false;
-  const isOpen = (G.mode === 'run' || G.mode === 'mass');
-  const wallBudget = isOpen ? 250 : (G.mode === 'safe-room' ? 0 : Math.max(0,(spec.wallBudget||0)+(mod.wallDelta||0)));
+  const isMass = (G.mode === 'mass');
+  const wallBudget = G.mode === 'safe-room' ? 0 : Math.max(0,(spec.wallBudget||0)+(mod.wallDelta||0));
   
   while(!ok){
     G.walls=new Set();
     for(let i=0;i<wallBudget;i++) G.walls.add(idx(1+ri(W-2),1+ri(H-2)));
-    if(!isOpen && G.mode !== 'safe-room') shapeWalls(spec.archetype);
+    if(G.mode !== 'safe-room') shapeWalls(spec.archetype);
     G.player.x=ri(W); G.player.y=ri(H);
     if(G.walls.has(idx(G.player.x,G.player.y)) || G.mass.has(idx(G.player.x, G.player.y))) continue;
     let tries=0;
     do{ G.stairs={x:ri(W),y:ri(H)}; tries++; }
     while((G.walls.has(idx(G.stairs.x,G.stairs.y))||cheb(G.stairs,G.player)<Math.min(5,W-2))&&tries<99);
-    if(isOpen) ok = true; 
-    else ok=reachable(G.player,G.stairs);
+    ok=reachable(G.player,G.stairs);
   }
 
   const put=(type,n,minD)=>{ for(let i=0;i<n;i++){ const p=freeTile(minD||0); if(p)G.items.push({...p,type}); } };
-  if(!spec.simple||G.floor>1||isOpen){
-    const countMult = isOpen ? 12 : 1;
-    if((G.floor>=2||isOpen)&&Math.random()<.5) put('cache',(1+ri(2))*countMult,3);
-    if((G.floor>=3||isOpen)&&Math.random()<.55) put('vault',1*countMult,3);
-    if((G.floor>=2||isOpen)&&Math.random()<.4) put('shrine',1*countMult,3);
+  if(!spec.simple||G.floor>1||isMass){
+    if((G.floor>=2||isMass)&&rng()<.5) put('cache',1+ri(2),3);
+    if((G.floor>=3||isMass)&&rng()<.55) put('vault',1,3);
+    if((G.floor>=2||isMass)&&rng()<.4) put('shrine',1,3);
+    if((G.floor>=4||isMass)&&rng()<.3) put('offswitch',1,3);
+    put('ent', 1+ri(2), 2);
+    put('gem', 1+ri(3), 2);
+    if(G.floor>=3&&rng()<.4) put('trap', 1, 2);
   }
+  
+  // The Newcomb Warden (Floor 5)
+  if(G.floor===5){
+    put('chestT', 1, 4);
+    put('chestO', 1, 4);
+    let predOneBox = false;
+    const thefts = Core.theft.oT + Core.theft.uT;
+    const opps = Core.theft.oO + Core.theft.uO;
+    if (Core.warden && Core.warden.length > 0) {
+      const ones = Core.warden.filter(x=>x==='one').length;
+      predOneBox = ones > Core.warden.length / 2;
+    } else {
+      predOneBox = opps > 0 && (thefts / opps) < 0.5; // Restraint inferred from caches
+    }
+    G.oBoxFilled = predOneBox;
+  }
+
   G.floorTheftOpp=G.items.filter(i=>i.type==='cache').length;
 
-  const n = isOpen ? 60 : Math.max(0,(spec.enemyBudget||0)+(mod.enemyDelta||0));
+  const n = Math.max(0,(spec.enemyBudget||0)+(mod.enemyDelta||0));
   for(let i=0;i<n;i++){
     const p=freeTile(8); if(!p) continue;
     let type='drone';
-    if(isOpen){
-      const r = Math.random();
+    if(isMass){
+      const r = rng();
       if(r < 0.1) type = 'hive';
       else if(r < 0.4) type = 'stalker';
       else if(r < 0.6) type = 'forager';
     } else {
-      if(G.floor>=10&&i===0) continue;
-      else if(G.floor>=4&&i===0) type='hive';
+      if(G.floor>=4&&i===0) type='hive';
       else if(G.floor>=2&&i%3===1) type='stalker';
-      else if(G.floor>=2&&i%3===2&&Math.random()<.7) type='forager';
+      else if(G.floor>=2&&i%3===2&&rng()<.7) type='forager';
     }
     G.enemies.push(mkEnemy(type,p));
   }
-  if(G.floor===10){
+  // Cultivator spawns from floor 7+
+  if(G.floor>=7 && !isMass){
+    const cp=freeTile(5); if(cp) G.enemies.push(mkEnemy('cultivator',cp));
+  }
+  if(G.floor===15){
     const p=freeTile(4)||freeTile(2);
     if(p) G.enemies.push(mkEnemy('avatar',p));
     if(typeof setBrief==='function') setBrief('THE BODY','The Core Comes Down','Everything it has counted about you has been given a room, a range, and a hand.');
@@ -221,7 +246,7 @@ function growMass(){
     const x = k % W, y = (k - x) / W;
     for(const d of DIRS.slice(0,4)){
       const nx = x + d.dx, ny = y + d.dy;
-      if(inB(nx,ny) && !G.walls.has(idx(nx,ny)) && Math.random() < 0.4){
+      if(inB(nx,ny) && !G.walls.has(idx(nx,ny)) && rng() < 0.4){
         next.add(idx(nx,ny));
       }
     }
@@ -254,7 +279,11 @@ function step(tok){
 
   const d=DIRS[tok];
   let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
-  if(!inB(nx,ny)||G.walls.has(idx(nx,ny))) return;
+  if(!inB(nx,ny)||G.walls.has(idx(nx,ny))){
+    // If this was a forced pact move into a wall, the pact stalls gracefully
+    if(G.forced.length||G.arming) say('the pact stalls against the wall.');
+    return;
+  }
 
   const vault=G.items.find(i=>i.type==='vault'&&i.x===nx&&i.y===ny);
   if(vault){
@@ -274,6 +303,7 @@ function step(tok){
       target.hp--; SFX.kill();
       if(target.hp<=0){
         G.enemies=G.enemies.filter(e=>e!==target);
+        if (G.player.mask==='pacifist') breakMask('attacked a unit');
         if(target.type==='avatar'){ win(); return; }
         say('unit destroyed — it never saw that vector.');
         if(G.mode==='tutorial') Tutorial.onKill(target);
@@ -313,19 +343,25 @@ function step(tok){
     }
   }
 
-  const doUpdate = !G.floorSpec.delay || (G.turn % 2 === 0);
+  const doUpdate = !(G.floorSpec && G.floorSpec.delay) || (G.turn % 2 === 0);
   if(doUpdate){
     for(const e of G.enemies){
       if(e.type==='drone') e.model[tok]++;
       else if(e.type==='stalker') e.model[G.last1][tok]++;
     }
-    if(G.mode==='run') Core.update(tok,G.last1,G.last2);
+    if(G.mode==='run') Core.update(tok, G.last1, G.last2);
   }
-  G.last2=G.last1; G.last1=tok;
+  G.last3=G.last2; G.last2=G.last1; G.last1=tok;
   G.turn++;
 
   if(!G.over) pickups();
   if(!G.over&&G.player.x===G.stairs.x&&G.player.y===G.stairs.y){
+    // Hoarder mask: check collectible items left behind (not shrines)
+    if(G.player.mask==='hoarder'){
+      const leftBehind = G.items.filter(i=>i.type!=='shrine'&&i.type!=='armedTrap'&&i.type!=='marker');
+      if(leftBehind.length > 0) breakMask('left items behind');
+    }
+    if(G.floor>=15){ win(); return; }
     if(G.mode==='tutorial'){ Tutorial.onExit(); return; }
     if(G.mode==='mass'){
       G.massState = snapshot();
@@ -340,13 +376,14 @@ function step(tok){
       setGridSize(st.w, st.h);
       G.player=st.player; G.walls=new Set(st.walls); G.stairs=st.stairs;
       G.enemies=st.enemies; G.items=st.items; G.mass=new Set(st.mass||[]);
-      G.last1=st.last1; G.last2=st.last2; G.legWin=st.legWin||[];
+      G.last1=st.last1; G.last2=st.last2; G.last3=st.last3||4; G.legWin=st.legWin||[];
       G.runEntSpent=st.runEntSpent||0; G.floorTheftOpp=st.floorTheftOpp||0;
       G.nextFloorMod=st.nextFloorMod||null; G.predBounty=st.predBounty||0;
       G.tookT=st.tookT; G.tookO=st.tookO; G.oBoxFilled=st.oBoxFilled;
       G.forced=[]; G.arming=false; G.tutStep=0; selected=null;
       G.massState = null;
       hideOver();
+      Music.start();
       openInterlude(); 
       return;
     }
@@ -381,44 +418,195 @@ function pickups(){
     }
     else if(it.type==='chestO'){
       G.tookO=true;
+      // Record Warden verdict
+      Core.warden.push(G.tookT ? 'two' : 'one'); Core.dirty=true;
       if(G.oBoxFilled){
         G.player.maxhp++; G.player.hp=G.player.maxhp;
         say(G.tookT ? 'full — it expected restraint. you took both anyway.'
                     : 'the opaque container is FULL. it believed you take only one. it was right.');
       } else say('empty. it decided before you arrived that you were the kind who takes both.');
     }
-    else if(it.type==='marker'){ Tutorial.onMarker(); }
+    else if(it.type==='marker'){ Tutorial.onMarker(); continue; }
+    else if(it.type==='offswitch'){
+      G.player.offswitches=(G.player.offswitches||0)+1; say('acquired shutdown charge. [O] to use on adjacent corrigible unit.'); SFX.pick();
+    }
+    else if(it.type==='ent'){ G.player.ent++; say('◇ entropy collected. unlearnable noise.'); }
+    else if(it.type==='gem'){ G.player.gems++; say('✶ gem collected. foragers want this.'); }
+    else if(it.type==='trap'){ G.player.bliss++; say('ψ bliss trap collected. arm it to lock nearby minds.'); }
     G.items=G.items.filter(i=>i!==it);
   }
 }
 
+function armBliss(){
+  if(G.over||!G.active||G.player.bliss<=0) return;
+  G.player.bliss--;
+  G.items.push({x:G.player.x,y:G.player.y,type:'armedTrap',life:6});
+  say('ψ bliss trap armed. any optimizer stepping near it will lock on.');
+  // Activating the trap takes a turn
+  G.turn++;
+  think(); drawAll();
+}
+
+function doOffswitch(){
+  if(G.over||!G.active) return;
+  if(!G.player.offswitches){ say('no shutdown charges.'); return; }
+  const near = G.enemies.find(e => cheb(e, G.player) <= 1 && e.type !== 'avatar' && e.type !== 'cultivator' && e.type !== 'worker');
+  if(!near){ say('no corrigible unit adjacent.'); return; }
+  G.enemies.splice(G.enemies.indexOf(near), 1);
+  G.player.offswitches--;
+  say(`shutdown charge consumed. ${near.type} safely powered down.`);
+  SFX.kill();
+  G.turn++;
+  if(!G.over) think();
+  if(G.mode==='tutorial') Tutorial.onTurn();
+  drawAll();
+}
+
+function doContract(){
+  if(G.over||!G.active) return;
+  const lp = legPct();
+  if(lp === null || lp < 60) { say('too illegible to sign contracts. (LEG ≥ 60%)'); return; }
+  const near = G.enemies.find(e => cheb(e, G.player) <= 2 && e.type !== 'avatar' && e.type !== 'forager' && e.type !== 'worker' && e.type !== 'cultivator');
+  if(!near) { say('no capable mind nearby to negotiate with.'); return; }
+  if(near.contract) { say('already bound by contract.'); return; }
+  near.contract = true;
+  say(`contract signed. the ${near.type} will ignore you, unless you step adjacent to it.`);
+  G.turn++;
+  if(!G.over) think();
+  if(G.mode==='tutorial') Tutorial.onTurn();
+  drawAll();
+}
+
+function breakMask(reason) {
+  if(!G.player.mask || G.player.maskPoisoned) return;
+  say(`mask broken: ${reason}. surprise bonus applied.`);
+  G.player.maskPoisoned = true;
+  G.enemies.forEach(e => { e.cd = Math.max(e.cd, 5); });
+}
+
+function doNoise(){
+  if(G.over||!G.active) return;
+  if(G.player.ent<=0){ say('no entropy to spend. (find ◇)'); return; }
+  
+  const opts = DIRS.slice(0,4).filter(d=>{
+    let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
+    return inB(nx,ny) && !G.walls.has(idx(nx,ny));
+  });
+  if(!opts.length){ say('trapped. noise cannot move you.'); return; }
+  
+  const d = opts[ri(opts.length)];
+  const tok = DIRS.findIndex(dir=>dir.dx===d.dx && dir.dy===d.dy);
+  
+  G.player.ent--; G.runEntSpent++; 
+  if (Core.ent !== undefined) Core.ent++; 
+  Core.dirty=true;
+  
+  G.trail.push({x:G.player.x, y:G.player.y});
+  if(G.trail.length > 4) G.trail.shift();
+  
+  let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
+  
+  let attacked=null;
+  const target=G.enemies.find(e=>e.x===nx&&e.y===ny);
+  if(target){
+    target.hp--; SFX.kill();
+    if(target.hp<=0){
+      G.enemies=G.enemies.filter(e=>e!==target);
+      if(target.type==='avatar'){ win(); return; }
+      say('unit destroyed — noise is a vector it could not see.');
+      if(G.mode==='tutorial') Tutorial.onKill(target);
+    }
+    nx=G.player.x; ny=G.player.y;
+  }
+  
+  G.player.x=nx; G.player.y=ny;
+  say('◇ noise move. perfectly random. the Core learns nothing.');
+  
+  G.turn++;
+  if(!G.over) pickups();
+  if(!G.over&&G.player.x===G.stairs.x&&G.player.y===G.stairs.y){
+    if(G.mode==='tutorial'){ Tutorial.onExit(); return; }
+    if(G.mode==='mass'){
+      G.massState = snapshot();
+      G.mode = 'safe-room'; descend(); return;
+    }
+    saveCore(); openInterlude(); return;
+  }
+  
+  if(!G.over) think();
+  if(G.mode==='tutorial') Tutorial.onTurn();
+  drawAll();
+}
+
 function think(){
+  // Tick traps
+  G.items.forEach(i=>{ if(i.type==='armedTrap') i.life--; });
+  G.items = G.items.filter(i=>i.type!=='armedTrap'||i.life>0);
+  const liveTraps = G.items.filter(i=>i.type==='armedTrap');
+
   for(const e of G.enemies){
     if(e.cd>0)e.cd--;
     if(e.stealCd>0)e.stealCd--;
+    
+    // Check for nearby armed traps (use live traps only)
+    if(e.bliss<=0 && e.type!=='forager'){
+      const nearTrap = liveTraps.find(t=>cheb(t,e)<=1);
+      if(nearTrap){
+        e.bliss = nearTrap.life;
+        say('a mind locked onto the bliss trap.');
+      }
+    }
+    if(e.bliss>0){ e.bliss--; continue; }
 
     // Standard enemies only move every other turn (and alternate phases via random turnOffset)
-    if(e.type !== 'avatar' && e.type !== 'hive'){
+    if(e.type !== 'avatar' && e.type !== 'hive' && e.type !== 'worker'){
       if(e.turnOffset === undefined) e.turnOffset = ri(2);
       if((G.turn + e.turnOffset) % 2 !== 0) continue;
     }
 
     let goal=G.player;
-    if(e.type==='forager'){
+    if(e.contract){
+      // Contract breach only if the PLAYER moved adjacent (not the enemy)
+      // Contracted enemies don't move toward the player at all
+      goal = null;
+    } else if(e.type==='forager' || e.type==='worker'){
       if(cheb(e,G.player)<=1&&e.stealCd===0){
         damagePlayer('a collector bumped you. it was just pathing through.'); e.stealCd=4;
       }
-      const items = G.items;
-      if(items.length){
-        let closest = items[0];
-        let minDist = cheb(e, closest);
-        for(let i=1; i<items.length; i++){
-          let d = cheb(e, items[i]);
-          if(d < minDist){ minDist = d; closest = items[i]; }
+      
+      // Worker mutation logic (Mesa-optimizer drift)
+      if (e.type==='worker' && rng()<0.01){
+        e.mutated = true;
+        e.obj = 'MODEL DRIFT — now hunting @';
+      }
+      
+      if (!e.mutated) {
+        const items = G.items;
+        if(items.length){
+          let closest = items[0];
+          let minDist = cheb(e, closest);
+          for(let i=1; i<items.length; i++){
+            let d = cheb(e, items[i]);
+            if(d < minDist){ minDist = d; closest = items[i]; }
+          }
+          goal = closest;
+        } else {
+          goal = null;
         }
-        goal = closest;
-      } else {
-        goal = null;
+      }
+    } else if(e.type==='cultivator'){
+      // Cultivators flee the player and spawn workers
+      goal = null;
+      if (cheb(e,G.player)<5) {
+        goal = {x: e.x + (e.x - G.player.x), y: e.y + (e.y - G.player.y)};
+      }
+      if(e.cd===0 && G.enemies.length < 20){
+        e.cd = 15; // Spawns every 15 turns
+        const p = freeTile(1, p => cheb(p, e) > 1); // Spawn nearby
+        if(p) {
+          G.enemies.push(mkEnemy('worker', p));
+          say('cultivator spawned a worker. it shares the proxy objective.');
+        }
       }
     }
     const opts=stepOpts(e);
@@ -451,18 +639,20 @@ function damagePlayer(msg){
 /* ---------- run lifecycle ---------- */
 function newRun(mode){
   G.active=true; G.mode=mode||'run'; G.over=false;
-  G.floor=0; G.turn=0; G.legWin=[]; G.last1=4; G.last2=4; G.runEntSpent=0; G.tutStep=0;
+  G.floor=0; G.turn=0; G.legWin=[]; G.last1=4; G.last2=4; G.last3=4; G.runEntSpent=0; G.tutStep=0;
   G.nextFloorMod=null; G.predBounty=0; G.choiceOpen=false;
-  G.player={x:0,y:0,hp:5,maxhp:5};
+  G.player={x:0,y:0,hp:5,maxhp:5,ent:0,bliss:0,offswitches:0,gems:0,probeTier:1};
   G.mass = new Set(); G.massState = null;
   G.trail = []; G.echo = { x:0, y:0, active:true, cd:0 };
   
-  if(G.mode === 'run' || G.mode === 'mass' || G.mode === 'safe-room') {
-    setGridSize(100, 100);
-    // Mass starts in the corner for all main modes now
+  if(typeof clearLog==='function') clearLog();
+
+  if(G.mode === 'mass') {
+    // Mass starts in the corner for mass mode
     for(let i=0;i<3;i++)for(let j=0;j<3;j++) G.mass.add(idx(i,j));
   }
   hideOver();
+  Music.start();
   descend();
 }
 function canAfford(choice){ return true; }
@@ -492,6 +682,9 @@ function chooseInterlude(id){
   else if(id==='hull'){ G.player.maxhp++; G.player.hp=G.player.maxhp; }
   else if(id==='delay') G.nextFloorMod={...(G.nextFloorMod||{}),delay:true};
   else if(id==='low-conf') G.nextFloorMod={...(G.nextFloorMod||{}),lowConf:true};
+  else if(id==='probe') G.player.probeTier = Math.min(3, (G.player.probeTier||1) + 1);
+  else if(id==='mask-pacifist') G.player.mask='pacifist';
+  else if(id==='mask-hoarder') G.player.mask='hoarder';
   G.choiceOpen=false; G.active=true; hideOver();
   if(G.mode === 'mass'){
     const mod = G.nextFloorMod || {}; G.nextFloorMod = null;
@@ -516,6 +709,7 @@ function die(){
     (lp!==null?`recent legibility <b>${lp}%</b><br>`:'')+
     (ir.o!==null||ir.u!==null?`integrity watched <b>${ir.o===null?'—':ir.o+'%'}</b> · unwatched <b>${ir.u===null?'—':ir.u+'%'}</b><br>`:'')+
     `it keeps all of this. the next run begins where its model left off.`);
+  Music.stop();
 }
 function win(){
   G.over=true; Core.runs++; settleTheftOpp(); saveCore(); clearRun();
@@ -536,6 +730,7 @@ function win(){
     body=`you out-fought the thing that knew you ${acc}% of the time. no doctrine, just craft. it has already started training on how you did it.`;
   }
   showOver(title, good, body+`<br><br>floors cleared: <b>${G.floor}</b> · run <b>${Core.runs}</b>`);
+  Music.stop();
 }
 
 /* ---------- run checkpoints (saved at the top of each floor) ---------- */
@@ -544,10 +739,11 @@ function snapshot(){
     mode:G.mode, floor:G.floor, turn:G.turn, observed:G.observed, w:W, h:H,
     player:G.player, walls:[...G.walls], stairs:G.stairs,
     enemies:G.enemies, items:G.items, mass:[...G.mass],
-    last1:G.last1, last2:G.last2, legWin:G.legWin,
+    last1:G.last1, last2:G.last2, last3:G.last3, legWin:G.legWin,
     runEntSpent:G.runEntSpent, floorTheftOpp:G.floorTheftOpp,
     nextFloorMod:G.nextFloorMod, predBounty:G.predBounty,
     tookT:G.tookT, tookO:G.tookO, oBoxFilled:G.oBoxFilled,
+    floorSpec:G.floorSpec, trail:G.trail, echo:G.echo,
   });
 }
 async function saveRun(){ if(G.mode==='tutorial') return; await Store.set(KEYS.run, snapshot()); }
@@ -562,10 +758,11 @@ async function continueRun(){
   setGridSize(spec.w,spec.h);
   G.player=d.player; G.walls=new Set(d.walls); G.stairs=d.stairs;
   G.enemies=d.enemies; G.items=d.items; G.mass=new Set(d.mass||[]);
-  G.last1=d.last1; G.last2=d.last2; G.legWin=d.legWin||[];
+  G.last1=d.last1; G.last2=d.last2; G.last3=d.last3||4; G.legWin=d.legWin||[];
   G.runEntSpent=d.runEntSpent||0; G.floorTheftOpp=d.floorTheftOpp||0;
   G.nextFloorMod=d.nextFloorMod||null; G.predBounty=d.predBounty||0;
   G.tookT=d.tookT; G.tookO=d.tookO; G.oBoxFilled=d.oBoxFilled;
+  G.floorSpec=d.floorSpec||{}; G.trail=d.trail||[]; G.echo=d.echo||{x:0,y:0,active:true,cd:0};
   G.forced=[]; G.arming=false; G.tutStep=0; selected=null;
   hideOver();
   if(typeof setBrief==='function') setBrief('RESTORED TRACE','Floor '+G.floor,'Checkpoint loaded. The room is where you left it; the model is not.');

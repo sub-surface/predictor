@@ -317,6 +317,11 @@ textarea#coreIO{
   transform:translateX(-50%);
   width:100%;
   max-width:400px;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:2px;
+  padding:4px;
+  box-shadow:var(--inset);
   pointer-events:none;
 }
 
@@ -377,6 +382,9 @@ header h1 b{color:var(--attn);font-weight:700}
   transition:opacity .15s;
   mix-blend-mode:screen;
 }
+body.colorblind .cell .stain{
+  background:rgba(95,198,160,.4); /* ent / cool color */
+}
 .cell.locked {
   animation: cellPulse 2.5s infinite ease-in-out;
 }
@@ -394,6 +402,9 @@ header h1 b{color:var(--attn);font-weight:700}
   border-radius:1px;
   pointer-events:none;
   animation:lock 0.4s steps(2) infinite;
+}
+body.colorblind .cell.locked::after{
+  border-color: var(--ent);
 }
 @keyframes lock{
   0%{opacity:.4; transform:translate(0,0)}

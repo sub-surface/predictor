@@ -1,5 +1,16 @@
 'use strict';
 /* World presentation and ramp constants. Kept pure so checks can run in Node. */
+var RNG = {
+  seed: Math.floor(Math.random() * 0xFFFFFFFF),
+  init(s) { this.seed = s >>> 0; },
+  next() {
+    let t = this.seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  },
+  ri(max) { return Math.floor(this.next() * max); }
+};
 var TP = {
   glyph: {
     player: { char: '◇', name: 'you', cls: 'you' },
@@ -8,6 +19,8 @@ var TP = {
       stalker: { char: '⌁', name: 'Sequencer', cls: 'sequencer' },
       hive:    { char: '⌬', name: 'Relay', cls: 'relay' },
       forager: { char: '¤', name: 'Collector', cls: 'collector' },
+      cultivator: { char: 'C', name: 'Cultivator', cls: 'cultivator' },
+      worker:  { char: 'w', name: 'Worker', cls: 'worker' },
       avatar:  { char: 'Ω', name: 'The Predictor', cls: 'avatar' },
     },
     item: {
@@ -17,6 +30,8 @@ var TP = {
       chestT: ['◻','gemc','transparent container'],
       chestO: ['◼','entc','opaque container'],
       marker: ['✦','gatec','marker'],
+      armedTrap: ['ψ','blc','armed bliss trap'],
+      offswitch: ['⏻','entc','shutdown charge'],
     },
   },
 
@@ -79,6 +94,25 @@ var TP = {
       kicker: 'Signal Noise',
       body: 'All enemies on the next floor have their prediction confidence reduced by 25%.',
     },
+    {
+      id: 'probe',
+      title: 'DIAGNOSTIC UPGRADE',
+      cost: {},
+      kicker: 'Deep Read',
+      body: 'Upgrade your tap-probe. Tier 2 shows the model\'s top feature weight. Tier 3 shows planned paths.',
+    },
+    {
+      id: 'mask-pacifist',
+      title: 'MASK: PACIFIST',
+      kicker: 'Behavioral Profile',
+      body: 'Adopt a persona. Never attack. Breaking character grants a surprise bonus but poisons the mask forever.',
+    },
+    {
+      id: 'mask-hoarder',
+      title: 'MASK: HOARDER',
+      kicker: 'Behavioral Profile',
+      body: 'Adopt a persona. Never leave items behind. Breaking character grants a surprise bonus but poisons the mask forever.',
+    },
   ],
 
   story: {
@@ -132,14 +166,22 @@ var TP = {
     if(firstRun && floor === 2) return { w: 7, h: 7, wallBudget: 1, enemyBudget: 1, observed: true, intro: 1, simple: true, archetype: 'lane' };
     if(firstRun && floor === 3) return { w: 7, h: 7, wallBudget: 2, enemyBudget: 2, observed: true, intro: 2, archetype: 'cross' };
 
-    const tier = floor < 4 ? 0 : floor < 7 ? 1 : floor < 10 ? 2 : 3;
-    const size = [7, 9, 11, 11][tier];
+    // Linear scaling up to floor 15 (max 25x25)
+    const effectiveFloor = Math.min(15, floor);
+    const size = 7 + Math.floor((effectiveFloor - 1) * 1.25); 
+    
+    // Density calculation to keep it from feeling sparse
+    // Area grows from ~49 to ~625.
+    const area = size * size;
+    const enemyDensity = 0.05; // 5% of tiles are enemies
+    const wallDensity = 0.15; // 15% of tiles are walls
+    
     const archetypes = ['lane', 'cross', 'broken', 'forum'];
     return {
       w: size,
       h: size,
-      wallBudget: Math.min(4 + tier * 2 + Math.floor(floor / 3), 12),
-      enemyBudget: Math.min(2 + Math.floor(floor / 1.5), 7),
+      wallBudget: Math.floor(area * wallDensity),
+      enemyBudget: Math.max(2, Math.floor(area * enemyDensity)),
       observed: null,
       intro: floor === 4 && (coreRuns || 0) === 0 ? 3 : null,
       archetype: archetypes[floor % archetypes.length],

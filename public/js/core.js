@@ -12,6 +12,7 @@ const Core = {
   warden: [],                                // 'one' | 'two' history
   theft: { oT:0, oO:0, uT:0, uO:0 },         // observed/unobserved thefts & opportunities
   ent:0,                                     // lifetime entropy spent against it
+  seq: {},                                   // Neural Core sequence tracker (last 3 moves)
   dirty:false,
 
   dist(o, last1, last2){
@@ -36,16 +37,45 @@ const Core = {
     const m = this.mix(last1,last2);
     if(m){ this.lifeP++; if(m.indexOf(Math.max(...m))===tok) this.lifeH++; }
     this.c0[tok]++; this.c1[last1][tok]++; this.c2[last2*5+last1][tok]++;
+    
+    // Neural Core: record sequence
+    if (typeof G !== 'undefined' && G.last3 !== undefined) {
+       const key = `${G.last3},${last2},${last1}`;
+       if (!this.seq[key]) this.seq[key] = new Array(5).fill(0);
+       this.seq[key][tok]++;
+    }
+
     this.n++; this.dirty = true;
     if(this.n % 500 === 0){                  // slow decay: it adapts to who you are becoming
       const dk = r => { for(let i=0;i<5;i++) r[i]*=.9; };
       dk(this.c0); this.c1.forEach(dk); this.c2.forEach(dk);
+      for(let k in this.seq) dk(this.seq[k]);
     }
+  },
+  predictOne(){
+    // Use G.last1 and G.last2 if we are in an active game
+    if(typeof G === 'undefined' || !G.active) return null;
+    
+    // Neural Core fast-path override if pattern is very strong
+    if (G.last3 !== undefined) {
+      const key = `${G.last3},${G.last2},${G.last1}`;
+      if (this.seq[key]) {
+         const t = this.seq[key].reduce((a,b)=>a+b,0);
+         const mx = Math.max(...this.seq[key]);
+         if (t > 5 && mx / t > 0.8) return this.seq[key].indexOf(mx); // Confident neural sequence prediction
+      }
+    }
+
+    const m = this.mix(G.last1, G.last2);
+    if(!m) return null;
+    const mx = Math.max(...m);
+    if(mx === 0) return null;
+    return m.indexOf(mx);
   },
   accuracy(){ return this.lifeP ? Math.round(100*this.lifeH/this.lifeP) : null; },
   pack(){
     return JSON.stringify({c0:this.c0,c1:this.c1,c2:this.c2,acc:this.acc,n:this.n,runs:this.runs,
-      lifeP:this.lifeP,lifeH:this.lifeH,warden:this.warden,theft:this.theft,ent:this.ent});
+      lifeP:this.lifeP,lifeH:this.lifeH,warden:this.warden,theft:this.theft,ent:this.ent,seq:this.seq});
   },
   unpack(s){
     try{
@@ -58,7 +88,8 @@ const Core = {
     this.c0.fill(0); this.c1.forEach(r=>r.fill(0)); this.c2.forEach(r=>r.fill(0));
     this.acc = [{p:0,h:0},{p:0,h:0},{p:0,h:0}];
     this.n=0; this.runs=0; this.lifeP=0; this.lifeH=0; this.warden=[];
-    this.theft={oT:0,oO:0,uT:0,uO:0}; this.ent=0; this.dirty=false;
+    this.theft={oT:0,oO:0,uT:0,uO:0}; this.ent=0; this.seq={};
+    this.dirty=true;
   }
 };
 

@@ -26,3 +26,27 @@ const SFX = {
   pick:  ()  => tone(587, .07, .025),
   ui:    ()  => tone(262, .05, .02),
 };
+
+const Music = {
+  bgm: null,
+  start(){
+    if(!S.sound) return;
+    if(this.bgm) clearInterval(this.bgm);
+    this.bgm = setInterval(() => {
+      if(!G.active || G.over || !S.sound) return;
+      // Generative ambient drone based on legibility
+      const leg = Core.accuracy();
+      const baseFreq = 55 + (leg || 0) * 0.5; // Drone gets higher pitched if legible
+      tone(baseFreq, 2.0, 0.015, 'triangle');
+      // Random ping based on prediction top choice
+      const topAction = Core.predictOne();
+      if(topAction !== null && Math.random() < 0.3){
+        tone(PITCH[topAction]*2, 0.4, 0.01, 'sine');
+      }
+    }, 2000);
+  },
+  stop(){
+    if(this.bgm) clearInterval(this.bgm);
+    this.bgm = null;
+  }
+};
