@@ -188,6 +188,16 @@ Seeded generation (mulberry32) + a daily seed where everyone faces the same floo
 
 Colorblind-safe stain palette toggle; full keyboard remap; turn log export; screen-reader pass on panels; an "explain this turn" inspector replaying the last resolution step-by-step (also the debugging tool).
 
+### [ ] 6.11 The Cellular Neural Core (NCA Attractor Basins as Adversary Memory)
+
+Drawing directly from the empirical findings in `lm-nca` (where a neural cellular automaton exhibits Hopfield-style associative-memory basins of attraction over token strings), an advanced or experimental boss variant (the **Lattice Avatar** / **Crystalline Core**) models player movement dynamics through a local 1D cellular lattice rather than a traditional context-mixing table or global attention head.
+
+- **Mechanism:** The player's recent move stream and board vector are clamped into the frozen conditioning channels of a 1D lattice. Over each turn, the hidden channels run $K$ local update steps under a shared depthwise rule, physically relaxing downhill into a learned pseudo-energy basin that reads out the predicted next action.
+- **Visualizing the Mind in Real Time:** Unlike opaque neural embeddings, NCA relaxation is spatial and local. The HUD can render the 1D lattice beside the board: the player watches ripples of activation propagate within the causal light cone ($\le 16$ cells/step) as the adversary's prediction literally "crystallizes" into an orange stain before it resolves.
+- **Dynamical Attack Surface:**
+  - **Entropy Injection:** Spending Entropy ($◇$) injects physical noise into the lattice channels, knocking the hidden state out of its deep basin into a chaotic bifurcation where no prediction can settle.
+  - **Basin Poisoning:** Deceptive patterns intentionally lure the cellular dynamics toward a shallow local minimum before shifting gait, exposing how distributed local rules handle sudden out-of-distribution shifts.
+
 ---
 
 ## 7. Why each safety concept is a mechanic, not a message
@@ -203,6 +213,7 @@ Colorblind-safe stain palette toggle; full keyboard remap; turn log export; scre
 | Corrigibility | off-switch trades | a negotiation, not a virtue |
 | Newcomb / prediction | the Warden | a fight that ended before the door opened |
 | Transparency & trust | vaults, contracts, MUTUAL ending | legibility as a key |
+| Attractor basins / energy landscapes | Cellular Neural Core (NCA lattice) | disrupting the enemy's crystallized convergence with noise |
 | Evals & observed behavior | the eye, cache ledgers, ending gate | a number they didn't know was being written down |
 
 The last row is the game's conscience and its only sermon, delivered once, at the end, in the player's own data.
