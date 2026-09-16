@@ -27,9 +27,9 @@ const context = {
 
 vm.createContext(context);
 vm.runInContext(coreCode + "\nglobalThis.Core = Core;", context);
-vm.runInContext(gameCode + "\nglobalThis.G = G; globalThis.step = step; globalThis.startCrucible = startCrucible; globalThis.startRun = startRun; globalThis.initCrucibleStage = initCrucibleStage;", context);
+vm.runInContext(gameCode + "\nglobalThis.G = G; globalThis.step = step; globalThis.startCrucible = startCrucible; globalThis.startRun = startRun; globalThis.initCrucibleStage = initCrucibleStage; globalThis.NODE_TYPES = NODE_TYPES; globalThis.COUNTERMEASURES = COUNTERMEASURES;", context);
 
-const { G, step, startCrucible, startRun, initCrucibleStage } = context;
+const { G, step, startCrucible, startRun, initCrucibleStage, NODE_TYPES, COUNTERMEASURES } = context;
 
 function assert(cond, msg) {
   if (!cond) {
@@ -78,6 +78,48 @@ assert(G.runClass === 'scout' && G.hasKnight === true && G.player.hp === 2, "Sco
 
 startRun('cryptographer');
 assert(G.runClass === 'cryptographer' && G.player.ent === 3, "Cryptographer starts with 3 Entropy");
+
+// Test 4: Node Content Contracts
+for (const [key, nodeDef] of Object.entries(NODE_TYPES)) {
+  assert(typeof nodeDef.objective === 'string' && nodeDef.objective.length > 0, `Node ${key} must have objective`);
+  assert(typeof nodeDef.watcher === 'string' && nodeDef.watcher.length > 0, `Node ${key} must have watcher`);
+  assert(typeof nodeDef.reward === 'string' && nodeDef.reward.length > 0, `Node ${key} must have reward`);
+  assert(typeof nodeDef.cost === 'string' && nodeDef.cost.length > 0, `Node ${key} must have cost`);
+  assert(typeof nodeDef.dossierEffect === 'string' && nodeDef.dossierEffect.length > 0, `Node ${key} must have dossier effect`);
+}
+
+// Test 5: Trust Gate Thresholds (Bronze 40%, Silver 60%, Gold 80%)
+startRun('operative');
+G.walls.clear();
+G.items = [{ x: 1, y: 1, type: 'vault' }];
+G.player.x = 1; G.player.y = 0;
+G.trace = 35; // Under 40% threshold
+step(3); // Step down onto vault
+assert(G.player.y === 0, "Player with Trace 35% must be blocked from unlocking Trust Gate (< 40%)");
+
+G.trace = 45; // Over 40% threshold
+step(3); // Step down onto vault
+assert(G.player.y === 1, "Player with Trace 45% must unlock Bronze Trust Gate (>= 40%)");
+
+// Test 6: Newcomb Testing Facility Decision & Counterfactual Recording
+startRun('operative');
+G.walls.clear();
+const initialWardenCount = context.Core.warden.length;
+G.items = [
+  { x: 2, y: 2, type: 'chestT' },
+  { x: 4, y: 2, type: 'chestO' }
+];
+G.player.x = 3; G.player.y = 2;
+// One-Box: Move right to (4,2) without taking transparent box
+step(2);
+assert(context.Core.warden.length === initialWardenCount + 1, "One-box choice must be recorded in Core.warden");
+assert(context.Core.warden[context.Core.warden.length - 1] === 'one', "Recorded choice must be 'one'");
+
+// Test 7: Countermeasures and Betrayal mechanics
+startRun('operative');
+assert(G.countermeasures.length === 2, "Operative starts with 2 equipped countermeasures");
+assert(G.countermeasures.some(c => c.id === 'ritual_compiler'), "Operative starts with Ritual Compiler");
+assert(G.countermeasures.some(c => c.id === 'decoy_credential'), "Operative starts with Decoy Credential");
 
 console.log("Game deterministic mechanics tests passed successfully!");
 

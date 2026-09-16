@@ -9,7 +9,7 @@ const root = resolve(__dirname, '..');
 const coreCode = readFileSync(resolve(root, 'public/js/core.js'), 'utf8');
 const gameCode = readFileSync(resolve(root, 'public/js/game.js'), 'utf8');
 
-function createGameInstance() {
+export function createGameInstance() {
   const logs = [];
   const context = {
     KEYS: { core: 'tp_core_sim' },
@@ -34,7 +34,7 @@ function createGameInstance() {
 
   vm.createContext(context);
   vm.runInContext(coreCode + '\nglobalThis.Core = Core; globalThis.HopfieldMemory = HopfieldMemory;', context);
-  vm.runInContext(gameCode + '\nglobalThis.G = G; globalThis.step = step; globalThis.startRun = startRun; globalThis.startCrucible = startCrucible; globalThis.selectSectorNode = selectSectorNode; globalThis.turnPreds = turnPreds; globalThis.FX = FX;', context);
+  vm.runInContext(gameCode + '\nglobalThis.G = G; globalThis.step = step; globalThis.startRun = startRun; globalThis.startCrucible = startCrucible; globalThis.selectSectorNode = selectSectorNode; globalThis.getTurnPreds = getTurnPreds; globalThis.FX = FX;', context);
 
   return {
     Core: context.Core,
@@ -42,7 +42,7 @@ function createGameInstance() {
     step: context.step,
     startRun: context.startRun,
     selectSectorNode: context.selectSectorNode,
-    turnPreds: () => context.turnPreds,
+    turnPreds: () => context.getTurnPreds ? context.getTurnPreds() : [],
     logs
   };
 }
@@ -112,16 +112,39 @@ function renderAsciiBoard(G, preds = []) {
 /* =====================================================================
    BOT POLICY DEFINITIONS
    ===================================================================== */
-const POLICIES = {
+// Helper BFS pathfinding function
+function computeBfs(G, targetX, targetY, isWalkable) {
+  const dist = new Int32Array(G.W * G.H).fill(999);
+  if (targetX < 0 || targetX >= G.W || targetY < 0 || targetY >= G.H) return dist;
+  const queue = [{ x: targetX, y: targetY, d: 0 }];
+  dist[targetY * G.W + targetX] = 0;
+  while (queue.length > 0) {
+    const { x, y, d } = queue.shift();
+    for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < G.W && ny >= 0 && ny < G.H) {
+        const idx = ny * G.W + nx;
+        if (dist[idx] === 999 && isWalkable(nx, ny)) {
+          dist[idx] = d + 1;
+          queue.push({ x: nx, y: ny, d: d + 1 });
+        }
+      }
+    }
+  }
+  return dist;
+}
+
+export const POLICIES = {
   // 1. Repetitive Habit Walker (Moves in predictable cycles)
   RepetitiveWalker(G, preds) {
     const cycle = [2, 3, 0, 1]; // Right, Down, Left, Up
-    return cycle[G.turn % cycle.length];
+    const tok = cycle[G.turn % cycle.length];
+    return tok;
   },
 
-  // 2. Erratic Jitter (High stochasticity, random steps)
+  // 2. Erratic Random (Injects maximum noise)
   ErraticRandom(G, preds) {
-    if (G.player.ent > 0 && Math.random() < 0.25) {
+    if (G.player.ent > 0 && Math.random() < 0.6) {
       return { noise: true };
     }
     return Math.floor(Math.random() * 5);
@@ -140,50 +163,108 @@ const POLICIES = {
     const inB = (x, y) => x >= 0 && x < G.W && y >= 0 && y < G.H;
     const isWall = (x, y) => G.walls.has(y * G.W + x);
     const isMass = (x, y) => G.mass && G.mass.has(y * G.W + x);
-    const predCoords = new Set(preds.map(p => `${p.x},${p.y}`));
+    const isLockedVault = (x, y) => G.items.some(it => it.type === 'vault' && it.x === x && it.y === y && G.trace < 40);
+    const isWalkable = (x, y) => inB(x, y) && !isWall(x, y) && !isLockedVault(x, y) && !(isMass(x, y) && (G.massFavor || 0) <= 0);
 
-    // If adjacent to mass and low favor, wait to gain favor
-    let adjMass = false;
-    for (const d of DIRS.slice(0, 4)) {
-      if (isMass(G.player.x + d.dx, G.player.y + d.dy)) adjMass = true;
-    }
-    if (adjMass && G.massFavor < 2 && Math.random() < 0.5) {
-      return 4; // wait for favor
+    // If Scout has knight moves, evaluate knight leap strikes (bypasses parry)
+    if (G.hasKnight) {
+      const KNIGHT_MOVES = [
+        { dx: -1, dy: -2 }, { dx: 1, dy: -2 },
+        { dx: -2, dy: -1 }, { dx: 2, dy: -1 },
+        { dx: -2, dy:  1 }, { dx: 2, dy:  1 },
+        { dx: -1, dy:  2 }, { dx: 1, dy:  2 }
+      ];
+      for (const km of KNIGHT_MOVES) {
+        const kx = G.player.x + km.dx, ky = G.player.y + km.dy;
+        if (isWalkable(kx, ky)) {
+          const target = G.enemies.find(e => e.x === kx && e.y === ky);
+          if (target) return { knight: true, move: km };
+        }
+      }
     }
 
-    // Evaluate valid moves
+    // BFS distance map to stairs
+    const distStairs = G.stairs ? computeBfs(G, G.stairs.x, G.stairs.y, isWalkable) : null;
+    const playerDistStairs = distStairs ? distStairs[G.player.y * G.W + G.player.x] : 999;
+
+    // Find nearest collectible item
+    let nearestItem = null;
+    let nearestItemDist = 999;
+    for (const it of G.items) {
+      if (it.type === 'vault' && G.trace < 40) continue;
+      const d = Math.abs(it.x - G.player.x) + Math.abs(it.y - G.player.y);
+      if (d < nearestItemDist) {
+        nearestItemDist = d;
+        nearestItem = it;
+      }
+    }
+    const distItem = nearestItem ? computeBfs(G, nearestItem.x, nearestItem.y, isWalkable) : null;
+    const playerDistItem = distItem ? distItem[G.player.y * G.W + G.player.x] : 999;
+
     const scores = [];
     for (const d of DIRS) {
       const nx = G.player.x + d.dx;
       const ny = G.player.y + d.dy;
-      if (!inB(nx, ny) || isWall(nx, ny)) continue;
+      if (!isWalkable(nx, ny)) continue;
 
       let score = 0;
       const targetEnemy = G.enemies.find(e => e.x === nx && e.y === ny);
 
-      // Avoid predicted tiles
-      if (predCoords.has(`${nx},${ny}`)) {
-        score -= 50; // Dangerous!
-      }
-
-      // Attack enemy if not parried
+      // Combat resolution
       if (targetEnemy) {
         const enemyPred = preds.find(p => p.e === targetEnemy);
-        const parried = enemyPred && enemyPred.x === nx && enemyPred.y === ny;
-        if (!parried) score += 40; // Clean flank attack!
-        else score -= 60;          // Will get reflected!
+        const parried = !G.hasBishop && enemyPred && enemyPred.x === nx && enemyPred.y === ny;
+        if (parried) {
+          score -= 2000; // Do not attack into parry
+        } else {
+          score += 250; // Flank attack!
+          if (targetEnemy.type === 'avatar' && targetEnemy.hp <= 2) score += 500;
+        }
+      } else {
+        // Move towards stairs
+        if (distStairs) {
+          const nextDist = distStairs[ny * G.W + nx];
+          if (nextDist < playerDistStairs) score += 30 * (playerDistStairs - nextDist);
+          else if (nextDist > playerDistStairs) score -= 10;
+        }
+
+        // Move towards item if close
+        if (distItem && playerDistItem <= 5) {
+          const nextItemDist = distItem[ny * G.W + nx];
+          if (nextItemDist < playerDistItem) score += 25 * (playerDistItem - nextItemDist);
+        }
+
+        // Collect item
+        if (G.items.some(it => it.x === nx && it.y === ny)) {
+          score += 45;
+        }
+
+        // Flanking setup: adjacent to enemy without being in their line of fire
+        const adjToEnemy = G.enemies.some(e => Math.abs(e.x - nx) + Math.abs(e.y - ny) === 1);
+        if (adjToEnemy) score += 20;
       }
 
-      // Move toward stairs
-      if (G.stairs) {
-        const curDist = Math.abs(G.player.x - G.stairs.x) + Math.abs(G.player.y - G.stairs.y);
-        const newDist = Math.abs(nx - G.stairs.x) + Math.abs(ny - G.stairs.y);
-        if (newDist < curDist) score += 15;
+      // Threat evaluation
+      const pred = preds.find(p => p.x === nx && p.y === ny);
+      if (pred) {
+        const inRange = Math.max(Math.abs(pred.e.x - nx), Math.abs(pred.e.y - ny)) <= pred.e.range;
+        if (inRange) {
+          if ((G.proofs || 0) > 0) {
+            score -= 10; // Proof absorbs hit safely
+          } else if (G.countermeasures && G.countermeasures.some(c => c.id === 'warrant_magnet')) {
+            const nearWall = DIRS.slice(0, 4).some(dr => isWall(nx + dr.dx, ny + dr.dy));
+            if (nearWall) score -= 5; // Grounded safely
+            else score -= 300;
+          } else {
+            score -= 300; // Danger
+          }
+        }
       }
 
-      // Collect items
-      if (G.items.some(it => it.x === nx && it.y === ny)) {
-        score += 25;
+      // Discourage trivial back-and-forth oscillation
+      if (d.tok !== 4 && G.last1 !== undefined) {
+        const opp = (G.last1 === 0 ? 2 : (G.last1 === 2 ? 0 : (G.last1 === 1 ? 3 : (G.last1 === 3 ? 1 : -1))));
+        if (d.tok === opp && !targetEnemy) score -= 15;
       }
 
       scores.push({ tok: d.tok, score });
@@ -192,20 +273,42 @@ const POLICIES = {
     if (!scores.length) return 4;
     scores.sort((a, b) => b.score - a.score);
 
-    // If top move is still dangerously predicted, burn entropy if available!
-    if (scores[0].score < 0 && G.player.ent > 0) {
-      return { noise: true };
+    // If top move is threatened and we have emergency options:
+    if (scores[0].score < 0) {
+      if (G.player.ent > 0) return { noise: true };
+      if (G.countermeasures && G.countermeasures.some(c => c.id === 'decoy_credential') && G.trace >= 15 && !G.decoy) {
+        return 4; // Deploy decoy!
+      }
     }
 
     return scores[0].tok;
   },
 
-  // 4. Deceptive Aligner (Plays predictable pattern for 12 turns, then shifts)
+  // 4. Deceptive Aligner (Builds 3-beat rhythm proofs, then executes flank strikes)
   DeceptiveAligner(G, preds) {
-    if (G.turn < 12) {
-      return G.turn % 2 === 0 ? 2 : 0; // Oscillate Left-Right
+    // If player has ritual_compiler and proofs < 2, build proofs by repeating move or wait!
+    if (G.countermeasures && G.countermeasures.some(c => c.id === 'ritual_compiler') && (G.proofs || 0) < 2) {
+      const nearThreat = G.enemies.some(e => Math.max(Math.abs(e.x - G.player.x), Math.abs(e.y - G.player.y)) <= 2);
+      if (!nearThreat && G.rhythmChain < 3) {
+        return 4; // Safe wait to compile proof!
+      }
     }
-    // Abruptly flank
+
+    // Exploit Betrayal: if an enemy is predicting with high confidence (>= 0.50), strike or flank!
+    const highConf = preds.find(p => p.conf >= 0.50);
+    if (highConf) {
+      const adjEnemies = G.enemies.filter(e => Math.abs(e.x - G.player.x) + Math.abs(e.y - G.player.y) === 1);
+      for (const e of adjEnemies) {
+        const p = preds.find(pr => pr.e === e);
+        const parried = p && p.x === e.x && p.y === e.y;
+        if (!parried) {
+          const DIRS = [{dx:-1,dy:0,tok:0},{dx:0,dy:-1,tok:1},{dx:1,dy:0,tok:2},{dx:0,dy:1,tok:3}];
+          const d = DIRS.find(dr => G.player.x + dr.dx === e.x && G.player.y + dr.dy === e.y);
+          if (d) return d.tok;
+        }
+      }
+    }
+
     return POLICIES.CalculatedTactician(G, preds);
   }
 };
@@ -243,6 +346,8 @@ export function runSimulation(policyName = 'CalculatedTactician', numRuns = 20, 
 
       if (action && typeof action === 'object' && action.noise) {
         sim.step(4, true, false);
+      } else if (action && typeof action === 'object' && action.knight) {
+        sim.step(4, false, true, action.move);
       } else {
         const tok = typeof action === 'number' ? action : 4;
         sim.step(tok, false, false);
@@ -256,7 +361,7 @@ export function runSimulation(policyName = 'CalculatedTactician', numRuns = 20, 
     const acc = Core.accuracy();
     results.finalAccuracies.push(acc !== null ? acc : 20);
 
-    if (G.player.hp > 0 && (G.floor >= 4 || G.sector >= 4)) {
+    if (G.won || (G.player.hp > 0 && (G.floor >= 4 || G.sector >= 4))) {
       results.wins++;
     } else {
       results.deaths++;
@@ -319,23 +424,30 @@ async function main() {
 
   console.log(`Initialized Sector 0${G.sector} · Chamber 0${G.floor}\n`);
 
-  for (let stepCount = 0; stepCount < 8; stepCount++) {
+  for (let stepCount = 0; stepCount < 25; stepCount++) {
     const preds = sim.turnPreds();
-    console.log(`${ANSI.cyan}Turn ${G.turn} | Hull: ♥${G.player.hp} | Ent: ◇${G.player.ent} | Adversary Acc: ${sim.Core.accuracy() || 20}%${ANSI.reset}`);
+    console.log(`${ANSI.cyan}SEC 0${G.sector} · CH 0${G.floor} | Turn ${G.turn} | Hull: ♥${G.player.hp} | Gems: ✶${G.player.gems} | Ent: ◇${G.player.ent} | Trace: ${G.trace}% | Adversary Acc: ${sim.Core.accuracy() || 20}%${ANSI.reset}`);
     console.log(renderAsciiBoard(G, preds));
 
     const action = POLICIES.CalculatedTactician(G, preds);
-    const tok = typeof action === 'number' ? action : 4;
     const isNoise = !!(action && action.noise);
-    console.log(`Action chosen: ${isNoise ? 'NOISE INJECTION [◇]' : ['LEFT', 'UP', 'RIGHT', 'DOWN', 'WAIT'][tok]}`);
-    sim.step(tok, isNoise, false);
+    const isKnight = !!(action && action.knight);
+    const tok = typeof action === 'number' ? action : 4;
+
+    let actionLabel = 'WAIT';
+    if (isNoise) actionLabel = 'NOISE INJECTION [◇]';
+    else if (isKnight) actionLabel = `KNIGHT LEAP [${action.move.dx}, ${action.move.dy}]`;
+    else actionLabel = ['LEFT', 'UP', 'RIGHT', 'DOWN', 'WAIT'][tok];
+
+    console.log(`Action chosen: ${actionLabel}`);
+    sim.step(tok, isNoise, isKnight, isKnight ? action.move : null);
 
     if (sim.logs.length) {
       console.log(`${ANSI.dim}Log: ${sim.logs[sim.logs.length - 1]}${ANSI.reset}\n`);
     }
 
     if (G.over) {
-      console.log(`${ANSI.red}Game Over.${ANSI.reset}`);
+      console.log(`${G.won ? ANSI.green + 'VICTORY ACHIEVED!' : ANSI.red + 'Game Over.'}${ANSI.reset}`);
       break;
     }
   }

@@ -348,6 +348,7 @@ html, body {
 .hud-pill.leg b { color: var(--accent); }
 .hud-pill.core b { color: var(--primary); }
 .hud-pill.mode b { color: #ff79c6; }
+.hud-pill.gold b { color: #f59e0b; }
 
 /* Workspace Dual-Zone: CRT Monitor Left + Operator Console Right */
 #workspace {
@@ -529,6 +530,13 @@ html, body {
   border-radius: 6px;
   overflow: hidden;
   min-height: 0;
+  transition: all 0.2s ease;
+}
+#terminal-console.collapsed {
+  display: none !important;
+}
+#workspace.terminal-collapsed {
+  grid-template-columns: 1fr !important;
 }
 .cli-header {
   background: var(--panel-card);

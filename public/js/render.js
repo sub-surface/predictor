@@ -10,32 +10,31 @@ let lastLogText = '';
 // Monitor Display Mode: 'board' | 'neural'
 let monitorMode = 'board';
 
-// Spritemap Texture Loader
+// Spritemap Texture Loader with exact measured sprite bounding boxes
 const Spritemap = {
   img: null,
   loaded: false,
-  colW: 307.2,
-  rowH: 256.0,
-  artH: 200.0, // Clean crop strictly above caption labels
 
-  coords: {
-    player:  { col: 0, row: 0 },
-    drone:   { col: 1, row: 0 },
-    stalker: { col: 2, row: 0 },
-    avatar:  { col: 3, row: 0 },
-    a9:      { col: 4, row: 0 },
-    floor:   { col: 0, row: 1 },
-    wall:    { col: 1, row: 1 },
-    gate:    { col: 2, row: 1 },
-    vault:   { col: 2, row: 1 },
-    stairs:  { col: 3, row: 1 },
-    chestT:  { col: 4, row: 1 },
-    chestO:  { col: 4, row: 1 },
-    ent:     { col: 0, row: 2 },
-    cache:   { col: 1, row: 2 },
-    target:  { col: 2, row: 2 },
-    laser:   { col: 3, row: 2 },
-    burst:   { col: 4, row: 2 }
+  rects: {
+    player:  { x: 62,   y: 70,  w: 177, h: 206 },
+    drone:   { x: 372,  y: 87,  w: 242, h: 173 },
+    stalker: { x: 614,  y: 76,  w: 257, h: 200 },
+    avatar:  { x: 934,  y: 32,  w: 209, h: 244 },
+    a9:      { x: 1252, y: 47,  w: 191, h: 224 },
+
+    floor:   { x: 25,   y: 386, w: 231, h: 177 },
+    wall:    { x: 256,  y: 375, w: 256, h: 220 },
+    gate:    { x: 512,  y: 372, w: 231, h: 223 },
+    vault:   { x: 512,  y: 372, w: 231, h: 223 },
+    stairs:  { x: 793,  y: 369, w: 212, h: 234 },
+    chestT:  { x: 1053, y: 372, w: 216, h: 239 },
+    chestO:  { x: 1301, y: 380, w: 194, h: 231 },
+
+    ent:     { x: 44,   y: 690, w: 263, h: 235 },
+    cache:   { x: 307,  y: 701, w: 307, h: 230 },
+    target:  { x: 614,  y: 713, w: 307, h: 230 },
+    laser:   { x: 921,  y: 692, w: 252, h: 245 },
+    burst:   { x: 1234, y: 697, w: 250, h: 245 }
   },
 
   init() {
@@ -43,11 +42,6 @@ const Spritemap = {
     this.img = new Image();
     this.img.src = 'assets/spritemap.png';
     this.img.onload = () => { this.loaded = true; };
-    this.img.onerror = () => {
-      // Fallback try root spritemap
-      this.img.src = 'spritemap.png';
-      this.img.onload = () => { this.loaded = true; };
-    };
   }
 };
 
@@ -209,13 +203,11 @@ function resizeBoardCanvas() {
 
 function drawSprite(key, px, py, ts) {
   if (!boardCtx) return;
-  const coord = Spritemap.coords[key];
-  if (Spritemap.loaded && Spritemap.img && coord) {
-    const sx = coord.col * Spritemap.colW;
-    const sy = coord.row * Spritemap.rowH;
+  const rect = Spritemap.rects[key];
+  if (Spritemap.loaded && Spritemap.img && rect) {
     boardCtx.drawImage(
       Spritemap.img,
-      sx, sy, Spritemap.colW, Spritemap.artH,
+      rect.x, rect.y, rect.w, rect.h,
       px, py, ts, ts
     );
   } else {
@@ -254,25 +246,29 @@ function renderBoardCanvas(t = 0) {
       const i = idx(x, y);
       const px = x * ts, py = y * ts;
 
+      // Base floor tile
+      ctx.fillStyle = '#10100d';
+      ctx.fillRect(px, py, ts, ts);
+      ctx.strokeStyle = 'rgba(231, 223, 207, 0.035)';
+      ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
+      if (((x * 17 + y * 31) & 15) === 0) {
+        ctx.fillStyle = 'rgba(101, 214, 217, 0.04)';
+        ctx.fillRect(px + ts * 0.18, py + ts * 0.18, ts * 0.18, ts * 0.18);
+      }
+
       if (G.walls.has(i)) {
-        // Pylon Block Wall
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
-        ctx.fillRect(px + ts * 0.15, py + ts * 0.28, ts * 0.85, ts * 0.72);
-        ctx.fillStyle = '#202018';
-        ctx.fillRect(px + 2, py + 6, ts - 4, ts - 8);
-        ctx.fillStyle = '#2d2a22';
-        ctx.fillRect(px + 2, py + 2, ts - 4, ts - 6);
-        ctx.fillStyle = 'rgba(231, 223, 207, 0.12)';
-        ctx.fillRect(px + 4, py + 3, ts - 8, 2);
-      } else {
-        // Floor tile
-        ctx.fillStyle = '#10100d';
-        ctx.fillRect(px, py, ts, ts);
-        ctx.strokeStyle = 'rgba(231, 223, 207, 0.035)';
-        ctx.strokeRect(px + 0.5, py + 0.5, ts - 1, ts - 1);
-        if (((x * 17 + y * 31) & 15) === 0) {
-          ctx.fillStyle = 'rgba(101, 214, 217, 0.04)';
-          ctx.fillRect(px + ts * 0.18, py + ts * 0.18, ts * 0.18, ts * 0.18);
+        // Wall: use spritemap wall if loaded, otherwise 3D pylon block
+        if (Spritemap.loaded && Spritemap.img) {
+          drawSprite('wall', px, py, ts);
+        } else {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+          ctx.fillRect(px + ts * 0.15, py + ts * 0.28, ts * 0.85, ts * 0.72);
+          ctx.fillStyle = '#202018';
+          ctx.fillRect(px + 2, py + 6, ts - 4, ts - 8);
+          ctx.fillStyle = '#2d2a22';
+          ctx.fillRect(px + 2, py + 2, ts - 4, ts - 6);
+          ctx.fillStyle = 'rgba(231, 223, 207, 0.12)';
+          ctx.fillRect(px + 4, py + 3, ts - 8, 2);
         }
       }
     }
@@ -300,36 +296,66 @@ function renderBoardCanvas(t = 0) {
   // 3. Draw Exit Lift
   if (G.stairs) {
     const px = G.stairs.x * ts, py = G.stairs.y * ts;
-    const ready = G.player.gems >= 3 || G.mode === 'crucible';
-    ctx.strokeStyle = ready ? 'rgba(115, 201, 155, 0.9)' : 'rgba(214, 179, 93, 0.6)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(px + ts * 0.12, py + ts * 0.12, ts * 0.76, ts * 0.76);
-    ctx.fillStyle = ready ? 'rgba(115, 201, 155, 0.18)' : 'rgba(214, 179, 93, 0.12)';
-    ctx.fillRect(px + ts * 0.2, py + ts * 0.2, ts * 0.6, ts * 0.6);
-    ctx.fillStyle = ready ? '#73c99b' : '#d6b35d';
-    ctx.font = `bold ${Math.floor(ts * 0.55)}px ui-monospace, monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('>', px + ts / 2, py + ts / 2);
+    const canOverclock = (G.player.gems >= 2);
+    if (Spritemap.loaded && Spritemap.img) {
+      drawSprite('stairs', px, py, ts);
+      if (canOverclock) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.8;
+        ctx.strokeRect(px + 2, py + 2, ts - 4, ts - 4);
+      }
+    } else {
+      const ready = canOverclock || G.mode === 'crucible';
+      ctx.strokeStyle = ready ? 'rgba(115, 201, 155, 0.9)' : 'rgba(214, 179, 93, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(px + ts * 0.12, py + ts * 0.12, ts * 0.76, ts * 0.76);
+      ctx.fillStyle = ready ? 'rgba(115, 201, 155, 0.18)' : 'rgba(214, 179, 93, 0.12)';
+      ctx.fillRect(px + ts * 0.2, py + ts * 0.2, ts * 0.6, ts * 0.6);
+      ctx.fillStyle = ready ? '#73c99b' : '#d6b35d';
+      ctx.font = `bold ${Math.floor(ts * 0.55)}px ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('>', px + ts / 2, py + ts / 2);
+    }
   }
 
   // 4. Draw Items
   for (const it of G.items) {
     const px = it.x * ts, py = it.y * ts;
-    let ch = '▣', col = '#d6b35d';
-    if (it.type === 'ent') { ch = '✦'; col = '#73c99b'; }
-    else if (it.type === 'vault') { ch = '≡'; col = '#ad79d5'; }
-    else if (it.type === 'chestT') { ch = '◻'; col = '#65d6d9'; }
-    else if (it.type === 'chestO') { ch = '◼'; col = '#d6b35d'; }
+    const spriteKey = it.type === 'ent' ? 'ent' : (it.type === 'cache' ? 'cache' : (it.type === 'vault' ? 'vault' : (it.type === 'chestT' ? 'chestT' : 'chestO')));
+    if (Spritemap.loaded && Spritemap.img) {
+      drawSprite(spriteKey, px, py, ts);
+    } else {
+      let ch = '▣', col = '#d6b35d';
+      if (it.type === 'ent') { ch = '✦'; col = '#73c99b'; }
+      else if (it.type === 'vault') { ch = '≡'; col = '#ad79d5'; }
+      else if (it.type === 'chestT') { ch = '◻'; col = '#65d6d9'; }
+      else if (it.type === 'chestO') { ch = '◼'; col = '#d6b35d'; }
 
+      ctx.save();
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = col;
+      ctx.fillStyle = col;
+      ctx.font = `${Math.floor(ts * 0.62)}px ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ch, px + ts / 2, py + ts / 2 + Math.sin(t / 250 + it.x) * 2);
+      ctx.restore();
+    }
+  }
+
+  // 4b. Draw Active Decoy (if projected)
+  if (G.decoy && G.decoy.ttl > 0) {
+    const dpx = G.decoy.x * ts, dpy = G.decoy.y * ts;
     ctx.save();
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = col;
-    ctx.fillStyle = col;
-    ctx.font = `${Math.floor(ts * 0.62)}px ui-monospace, monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(ch, px + ts / 2, py + ts / 2 + Math.sin(t / 250 + it.x) * 2);
+    ctx.globalAlpha = 0.55 + 0.25 * Math.sin(t / 150);
+    drawSprite('player', dpx, dpy, ts);
+    ctx.strokeStyle = '#06b6d4';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(dpx + 3, dpy + 3, ts - 6, ts - 6);
+    ctx.fillStyle = '#06b6d4';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText('DECOY', dpx + ts / 2, dpy + ts - 4);
     ctx.restore();
   }
 
@@ -386,52 +412,74 @@ function renderBoardCanvas(t = 0) {
     ctx.strokeRect(px + 1.5, py + 1.5, ts - 3, ts - 3);
   }
 
-  // 6. Draw Enemies (Glow Glyphs)
+  // 6. Draw Enemies (Spritemap or Glow Glyphs)
   for (const e of G.enemies) {
     const px = e.x * ts, py = e.y * ts;
-    let ch = '⌖', col = '#65d6d9';
-    if (e.type === 'drone') { ch = '⌖'; col = '#65d6d9'; }
-    else if (e.type === 'stalker') { ch = '⌁'; col = '#d6b35d'; }
-    else if (e.type === 'avatar') { ch = 'Ω'; col = '#ad79d5'; }
+    const spriteKey = e.type === 'avatar' ? 'avatar' : (e.type === 'stalker' ? 'stalker' : 'drone');
+    if (Spritemap.loaded && Spritemap.img) {
+      drawSprite(spriteKey, px, py, ts);
+    } else {
+      let ch = '⌖', col = '#65d6d9';
+      if (e.type === 'drone') { ch = '⌖'; col = '#65d6d9'; }
+      else if (e.type === 'stalker') { ch = '⌁'; col = '#d6b35d'; }
+      else if (e.type === 'avatar') { ch = 'Ω'; col = '#ad79d5'; }
 
-    ctx.save();
-    ctx.shadowBlur = e.type === 'avatar' ? 16 : 8;
-    ctx.shadowColor = col;
-    ctx.fillStyle = col;
-    ctx.font = `${Math.floor(ts * (e.type === 'avatar' ? 0.76 : 0.68))}px ui-monospace, monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(ch, px + ts / 2, py + ts / 2);
-    ctx.restore();
+      ctx.save();
+      ctx.shadowBlur = e.type === 'avatar' ? 16 : 8;
+      ctx.shadowColor = col;
+      ctx.fillStyle = col;
+      ctx.font = `${Math.floor(ts * (e.type === 'avatar' ? 0.76 : 0.68))}px ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ch, px + ts / 2, py + ts / 2);
+      ctx.restore();
+    }
 
+    // Stun feedback
+    if (e.cd > 0) {
+      ctx.fillStyle = '#06b6d4';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡STUN', px + ts / 2, py + ts * 0.25);
+    }
+
+    // Enemy Health Pips
     if (e.hp > 1) {
-      ctx.fillStyle = 'rgba(231, 223, 207, 0.8)';
+      ctx.fillStyle = 'rgba(231, 223, 207, 0.9)';
       ctx.font = `bold ${Math.max(9, Math.floor(ts * 0.22))}px monospace`;
       ctx.textAlign = 'center';
-      ctx.fillText('•'.repeat(e.hp), px + ts / 2, py + ts * 0.88);
+      ctx.fillText('•'.repeat(e.hp), px + ts / 2, py + ts * 0.92);
     }
   }
 
-  // 7. Draw Player Operative (The Glowing Diamond Avatar from Shoggoth Artifact)
+  // 7. Draw Player Operative
   const fav = (G.massFavor || 0) > 0;
   const pCol = fav ? '#73c99b' : '#65d6d9';
   const px = G.player.x * ts, py = G.player.y * ts;
 
-  ctx.save();
-  ctx.shadowBlur = 14;
-  ctx.shadowColor = pCol;
-  ctx.fillStyle = pCol;
-  ctx.strokeStyle = '#e7dfcf';
-  ctx.lineWidth = 1.8;
-  ctx.beginPath();
-  ctx.moveTo(px + ts / 2, py + ts * 0.12);
-  ctx.lineTo(px + ts * 0.85, py + ts / 2);
-  ctx.lineTo(px + ts / 2, py + ts * 0.88);
-  ctx.lineTo(px + ts * 0.15, py + ts / 2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+  if (Spritemap.loaded && Spritemap.img) {
+    ctx.save();
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = pCol;
+    drawSprite('player', px, py, ts);
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = pCol;
+    ctx.fillStyle = pCol;
+    ctx.strokeStyle = '#e7dfcf';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(px + ts / 2, py + ts * 0.12);
+    ctx.lineTo(px + ts * 0.85, py + ts / 2);
+    ctx.lineTo(px + ts / 2, py + ts * 0.88);
+    ctx.lineTo(px + ts * 0.15, py + ts / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // 7. Draw Blazing Laser Strikes (from FX.beams)
   if (typeof FX !== 'undefined') {
@@ -731,7 +779,13 @@ function drawAll() {
 
   const lp = legPct();
   const legEl = $('hud-leg');
-  if (legEl) legEl.textContent = lp !== null ? `${lp}%` : '—';
+  if (legEl) legEl.textContent = `${G.trace !== undefined ? G.trace : 30}%`;
+
+  const gemsEl = $('hud-gems');
+  if (gemsEl) gemsEl.textContent = `✶${G.player.gems || 0}`;
+
+  const traitEl = $('hud-trait');
+  if (traitEl) traitEl.textContent = (G.dominantHypothesis || 'RITUALIST').toUpperCase();
 
   const fit = Core.accuracy();
   const fitEl = $('hud-fit');
@@ -763,23 +817,26 @@ function say(msg) {
    INTEGRATED WORKSTATION TERMINAL (A-9)
    ===================================================================== */
 function openCli() {
-  const win = $('cli-modal');
-  if (win) win.classList.add('open');
+  const win = $('terminal-console');
+  const ws = $('workspace');
+  if (win) win.classList.remove('collapsed');
+  if (ws) ws.classList.remove('terminal-collapsed');
   const inp = $('cli-input');
   if (inp) inp.focus();
 }
 
 function closeCli() {
-  const win = $('cli-modal');
-  if (win) win.classList.remove('open');
+  const win = $('terminal-console');
+  const ws = $('workspace');
+  if (win) win.classList.add('collapsed');
+  if (ws) ws.classList.add('terminal-collapsed');
+  if (typeof resizeBoardCanvas === 'function') resizeBoardCanvas();
 }
 
 function toggleCli() {
-  const win = $('cli-modal');
-  if (win) {
-    if (win.classList.contains('open')) closeCli();
-    else openCli();
-  }
+  const win = $('terminal-console');
+  if (win && win.classList.contains('collapsed')) openCli();
+  else closeCli();
 }
 
 function cliPrint(text, type = 'normal') {
@@ -801,6 +858,9 @@ function execCli(cmd) {
 
   if (action === 'help') {
     cliPrint('OPERATOR DIRECTORY:', 'system');
+    cliPrint('  dossier / profile  : View persistent player hypotheses', 'accent');
+    cliPrint('  countermeasures    : List equipped rule-mutating chips', 'accent');
+    cliPrint('  overclock          : Spend 2 Gems to repair Hull & Entropy', 'accent');
     cliPrint('  nn / model / loss  : Toggle Neural Diagnostic Suite', 'accent');
     cliPrint('  map / sectors      : Open FTL Sector Route Map', 'accent');
     cliPrint('  weights            : Dump Markov counts & logits', 'accent');
@@ -809,6 +869,34 @@ function execCli(cmd) {
     cliPrint('  theme <name>       : Switch phosphor palette (oled, green, cyan, light)', 'accent');
     cliPrint('  protocol           : Toggle Cardinal / Knight protocol', 'accent');
     cliPrint('  clear              : Clear console output', 'accent');
+  } else if (action === 'dossier' || action === 'profile') {
+    const d = Core.dossier || {};
+    cliPrint('PERSISTENT DOSSIER TRAITS:', 'system');
+    cliPrint(`  Exit-Seeker : ${d.exitSeeker || 0} (${Math.round(((G.hypotheses && G.hypotheses.exitSeeker) || 0.2) * 100)}% live)`, 'daemon');
+    cliPrint(`  Collector   : ${d.collector || 0} (${Math.round(((G.hypotheses && G.hypotheses.collector) || 0.2) * 100)}% live)`, 'daemon');
+    cliPrint(`  Ritualist   : ${d.ritualist || 0} (${Math.round(((G.hypotheses && G.hypotheses.ritualist) || 0.2) * 100)}% live)`, 'daemon');
+    cliPrint(`  Caretaker   : ${d.caretaker || 0} (${Math.round(((G.hypotheses && G.hypotheses.caretaker) || 0.2) * 100)}% live)`, 'daemon');
+    cliPrint(`  Noise Addict: ${d.noiseAddict || 0} (${Math.round(((G.hypotheses && G.hypotheses.noiseAddict) || 0.2) * 100)}% live)`, 'daemon');
+    cliPrint(`  Deceptive Betrayals: ${G.betrayals || 0} (Lifetime: ${d.betrayals || 0})`, 'accent');
+  } else if (action === 'countermeasures' || action === 'chips') {
+    cliPrint(`EQUIPPED COUNTERMEASURES (${G.countermeasures.length}/4 SLOTS):`, 'system');
+    if (G.countermeasures.length === 0) {
+      cliPrint('  (None installed. Visit Trust Gates or Gateway lifts).', 'user');
+    } else {
+      G.countermeasures.forEach(cm => {
+        cliPrint(`  [${cm.icon}] ${cm.name}: ${cm.desc}`, 'accent');
+      });
+    }
+  } else if (action === 'overclock') {
+    if (G.player.gems >= 2) {
+      G.player.gems -= 2;
+      G.player.hp = Math.min(G.player.maxHp, G.player.hp + 1);
+      G.player.ent = Math.min(5, G.player.ent + 1);
+      cliPrint('LIFT OVERCLOCKED: -2 GEMS // +1 HULL & +1 ENTROPY RESTORED.', 'accent');
+      drawAll();
+    } else {
+      cliPrint('ERROR: INSUFFICIENT GEMS. Overclocking requires 2 Gems [✶].', 'error');
+    }
   } else if (action === 'nn' || action === 'model' || action === 'loss') {
     toggleMonitorMode();
     cliPrint(`Monitor mode set to ${monitorMode.toUpperCase()}.`, 'system');
@@ -882,10 +970,12 @@ function openSectorMap() {
       card.className = `sector-node-card ${node.type} ${node.cleared ? 'cleared' : ''} ${node.available ? 'available' : ''} ${isCurrent ? 'current' : ''}`;
       if (selectedMapNodeId === node.id) card.classList.add('selected');
 
+      const nodeDef = NODE_TYPES[node.type] || { icon: '⌖', name: node.name, threat: node.threat };
       card.innerHTML = `
-        <div class="node-icon">${NODE_TYPES[node.type].icon}</div>
+        <div class="node-icon">${nodeDef.icon}</div>
         <div class="node-name">${node.name}</div>
         <div class="node-threat">${node.threat}</div>
+        <div class="node-tag" style="font-size:0.6rem;color:var(--primary);margin-top:2px">${nodeDef.tag || ''}</div>
       `;
 
       card.onclick = () => {
@@ -895,7 +985,13 @@ function openSectorMap() {
         card.classList.add('selected');
         const detailEl = $('sector-detail-brief');
         if (detailEl) {
-          detailEl.innerHTML = `<b>${node.name}</b> [${node.threat} THREAT]<br>${node.desc}`;
+          detailEl.innerHTML = `
+            <b>${node.name}</b> [${node.threat} THREAT]<br>
+            <b>Objective:</b> ${nodeDef.objective}<br>
+            <b>Watcher:</b> ${nodeDef.watcher}<br>
+            <b>Reward:</b> ${nodeDef.reward} · <b>Cost:</b> ${nodeDef.cost}<br>
+            <b>Dossier Effect:</b> ${nodeDef.dossierEffect}
+          `;
         }
       };
 

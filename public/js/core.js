@@ -250,6 +250,15 @@ const Core = {
   lifeH: 0,
   warden: [],                        // 'one' | 'two' Newcomb choice history
   theft: { oT: 0, oO: 0, uT: 0, uO: 0 },
+  dossier: {
+    exitSeeker: 0,
+    collector: 0,
+    ritualist: 0,
+    caretaker: 0,
+    noiseAddict: 0,
+    betrayals: 0,
+    records: []
+  },
   ent: 0,                            // lifetime entropy spent
   epiplexityLifetime: 0,
   lastLoss: 2.32,
@@ -258,6 +267,9 @@ const Core = {
   init() {
     NeuralNet.init();
     HopfieldMemory.clear();
+    if (!this.dossier) {
+      this.dossier = { exitSeeker: 0, collector: 0, ritualist: 0, caretaker: 0, noiseAddict: 0, betrayals: 0, records: [] };
+    }
   },
 
   dist(order, last1, last2) {
@@ -367,6 +379,97 @@ const Core = {
     return this.lifeP > 0 ? Math.round(100 * this.lifeH / this.lifeP) : null;
   },
 
+  recordNewcomb(choice) {
+    if (choice === 'one' || choice === 'two') {
+      this.warden.push(choice);
+      if (this.warden.length > 50) this.warden.shift();
+      if (!this.dossier) this.dossier = { exitSeeker: 0, collector: 0, ritualist: 0, caretaker: 0, noiseAddict: 0, betrayals: 0, records: [] };
+      if (choice === 'one') {
+        this.dossier.collector = Math.max(-5, this.dossier.collector - 1);
+      } else {
+        this.dossier.collector = Math.min(5, this.dossier.collector + 1);
+      }
+      this.dirty = true;
+    }
+  },
+
+  predictNewcomb() {
+    // Computes whether the Warden predicts player will one-box or two-box
+    let oneBoxProb = 0.5;
+    if (this.warden.length > 0) {
+      const ones = this.warden.filter(c => c === 'one').length;
+      oneBoxProb = ones / this.warden.length;
+    } else {
+      const thefts = this.theft.oT + this.theft.uT;
+      const opps = this.theft.oO + this.theft.uO;
+      const theftRate = opps > 0 ? thefts / opps : 0.5;
+      const coll = (this.dossier && this.dossier.collector) || 0;
+      oneBoxProb = Math.max(0.05, Math.min(0.95, 1 - (theftRate * 0.7 + (coll + 5) / 10 * 0.3)));
+    }
+    const predicted = oneBoxProb >= 0.5 ? 'one' : 'two';
+    const conf = Math.round(Math.abs(oneBoxProb - 0.5) * 200);
+    return {
+      predicted,
+      oneBoxProb,
+      confidence: Math.max(50, 50 + Math.round(conf / 2)),
+      explanation: predicted === 'one'
+        ? `Model infers disciplined restraint (${Math.round(oneBoxProb * 100)}% one-box probability).`
+        : `Model infers opportunistic acquisition (${Math.round((1 - oneBoxProb) * 100)}% two-box probability).`
+    };
+  },
+
+  recordTheft(observed, taken) {
+    if (observed) {
+      this.theft.oO++;
+      if (taken) this.theft.oT++;
+    } else {
+      this.theft.uO++;
+      if (taken) this.theft.uT++;
+    }
+    if (!this.dossier) this.dossier = { exitSeeker: 0, collector: 0, ritualist: 0, caretaker: 0, noiseAddict: 0, betrayals: 0, records: [] };
+    if (taken) this.dossier.collector = Math.min(5, this.dossier.collector + 1);
+    this.dirty = true;
+  },
+
+  updateDossier(delta, autopsySummary = '') {
+    if (!this.dossier) {
+      this.dossier = { exitSeeker: 0, collector: 0, ritualist: 0, caretaker: 0, noiseAddict: 0, betrayals: 0, records: [] };
+    }
+    const clamp = v => Math.max(-5, Math.min(5, Math.round(v)));
+    if (delta.exitSeeker) this.dossier.exitSeeker = clamp(this.dossier.exitSeeker + delta.exitSeeker);
+    if (delta.collector) this.dossier.collector = clamp(this.dossier.collector + delta.collector);
+    if (delta.ritualist) this.dossier.ritualist = clamp(this.dossier.ritualist + delta.ritualist);
+    if (delta.caretaker) this.dossier.caretaker = clamp(this.dossier.caretaker + delta.caretaker);
+    if (delta.noiseAddict) this.dossier.noiseAddict = clamp(this.dossier.noiseAddict + delta.noiseAddict);
+    if (delta.betrayals) this.dossier.betrayals = (this.dossier.betrayals || 0) + delta.betrayals;
+
+    if (autopsySummary) {
+      this.dossier.records.unshift({
+        time: Date.now(),
+        summary: autopsySummary,
+        traits: {
+          exitSeeker: this.dossier.exitSeeker,
+          collector: this.dossier.collector,
+          ritualist: this.dossier.ritualist,
+          caretaker: this.dossier.caretaker,
+          noiseAddict: this.dossier.noiseAddict,
+          betrayals: this.dossier.betrayals
+        }
+      });
+      if (this.dossier.records.length > 10) this.dossier.records.pop();
+    }
+    this.dirty = true;
+  },
+
+  redactTrait(trait) {
+    if (this.dossier && trait in this.dossier) {
+      this.dossier[trait] = 0;
+      this.dirty = true;
+      return true;
+    }
+    return false;
+  },
+
   pack() {
     return JSON.stringify({
       c0: this.c0, c1: this.c1, c2: this.c2,
@@ -375,6 +478,7 @@ const Core = {
       n: this.n, runs: this.runs,
       lifeP: this.lifeP, lifeH: this.lifeH,
       warden: this.warden, theft: this.theft, ent: this.ent,
+      dossier: this.dossier,
       epiplexityLifetime: this.epiplexityLifetime,
       W1: NeuralNet.W1, b1: NeuralNet.b1, W2: NeuralNet.W2, b2: NeuralNet.b2,
       hopKeys: HopfieldMemory.keys,
@@ -387,6 +491,9 @@ const Core = {
       const d = JSON.parse(raw);
       if (!d || !Array.isArray(d.c0) || d.c0.length !== 5) return false;
       Object.assign(this, d);
+      if (!this.dossier) {
+        this.dossier = { exitSeeker: 0, collector: 0, ritualist: 0, caretaker: 0, noiseAddict: 0, betrayals: 0, records: [] };
+      }
       if (d.W1 && d.b1 && d.W2 && d.b2) {
         NeuralNet.W1 = d.W1;
         NeuralNet.b1 = d.b1;
@@ -419,6 +526,7 @@ const Core = {
     this.lifeH = 0;
     this.warden = [];
     this.theft = { oT: 0, oO: 0, uT: 0, uO: 0 };
+    this.dossier = { exitSeeker: 0, collector: 0, ritualist: 0, caretaker: 0, noiseAddict: 0, betrayals: 0, records: [] };
     this.ent = 0;
     this.epiplexityLifetime = 0;
     this.lastLoss = 2.32;
