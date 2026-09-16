@@ -30,5 +30,23 @@ const SFX = {
   kill: ()  => tone(130, 0.14, 0.06, 'square'),
   pick: ()  => tone(587, 0.08, 0.03, 'sine'),
   gate: ()  => tone(523, 0.15, 0.04, 'triangle'),
-  ui:   ()  => tone(262, 0.05, 0.02, 'sine')
+  ui:   ()  => tone(262, 0.05, 0.02, 'sine'),
+  betray: () => {
+    tone(880, 0.08, 0.05, 'sawtooth');
+    setTimeout(() => tone(440, 0.12, 0.04, 'square'), 40);
+  },
+  proof: () => {
+    tone(659, 0.06, 0.04, 'triangle');
+    setTimeout(() => tone(1046, 0.12, 0.04, 'sine'), 50);
+  },
+  decoy: () => {
+    tone(523, 0.05, 0.04, 'sine');
+    setTimeout(() => tone(659, 0.05, 0.04, 'triangle'), 30);
+    setTimeout(() => tone(784, 0.1, 0.03, 'sine'), 60);
+  },
+  overclock: () => {
+    tone(330, 0.08, 0.04, 'sine');
+    setTimeout(() => tone(440, 0.08, 0.04, 'sine'), 60);
+    setTimeout(() => tone(587, 0.12, 0.05, 'triangle'), 120);
+  }
 };

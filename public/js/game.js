@@ -1070,6 +1070,7 @@ function step(tok, isNoise = false, isKnight = false, knightMove = null) {
     // Decoy Credential trigger
     if (hasCountermeasure('decoy_credential') && G.trace >= 15 && !G.decoy) {
       G.decoy = { x: G.player.x, y: G.player.y, ttl: 2 };
+      if (typeof SFX !== 'undefined' && SFX.decoy) SFX.decoy();
       addPopup(G.player.x, G.player.y, 'DECOY PROJECTED ⚿', '#06b6d4');
       say('A-9: [^_^] "Decoy Credential active. Enemy targeting locked onto holographic signature."');
     }
@@ -1153,6 +1154,7 @@ function step(tok, isNoise = false, isKnight = false, knightMove = null) {
     if (p.conf >= 0.50 && (p.x !== G.player.x || p.y !== G.player.y)) {
       betrayedThisTurn = true;
       p.e.cd = 2; // Stun the watcher!
+      if (typeof SFX !== 'undefined' && SFX.betray) SFX.betray();
       addPopup(p.e.x, p.e.y, 'BETRAYAL STUN ⚡', '#06b6d4');
       G.betrayals++;
       if (hasCountermeasure('noise_mortgage') && G.trace >= 80) {
@@ -1229,6 +1231,7 @@ function step(tok, isNoise = false, isKnight = false, knightMove = null) {
       if (G.rhythmChain >= 3 && hasCountermeasure('ritual_compiler')) {
         G.proofs++;
         G.rhythmChain = 0;
+        if (typeof SFX !== 'undefined' && SFX.proof) SFX.proof();
         addPopup(G.player.x, G.player.y, '+1 PROOF [⚙]', '#a855f7');
         say('A-9: [⚙] "Ritual Compiler compiled 3-beat rhythm: +1 Proof banked."');
       }
@@ -1310,6 +1313,7 @@ function step(tok, isNoise = false, isKnight = false, knightMove = null) {
     if (G.player.gems >= 2 && G.player.hp < G.player.maxHp) {
       G.player.gems -= 2;
       G.player.hp++;
+      if (typeof SFX !== 'undefined' && SFX.overclock) SFX.overclock();
       addPopup(G.player.x, G.player.y, 'LIFT OVERCLOCKED: +1 HP', '#50fa7b');
     }
     descend();

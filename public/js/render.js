@@ -897,6 +897,23 @@ function execCli(cmd) {
     } else {
       cliPrint('ERROR: INSUFFICIENT GEMS. Overclocking requires 2 Gems [✶].', 'error');
     }
+  } else if (action === 'redact') {
+    const trait = parts[1];
+    const validTraits = ['exitSeeker', 'collector', 'ritualist', 'caretaker', 'noiseAddict'];
+    const match = validTraits.find(t => t.toLowerCase() === (trait || '').toLowerCase());
+    if (!match) {
+      cliPrint(`USAGE: redact <trait> (Options: ${validTraits.join(', ')})`, 'error');
+    } else {
+      if (G.player.gems >= 1 || G.over || !G.active) {
+        if (G.player.gems >= 1) G.player.gems--;
+        Core.redactTrait(match);
+        saveCore();
+        cliPrint(`DOSSIER REDACTED: Trait '${match}' purged from persistent surveillance memory.`, 'accent');
+        drawAll();
+      } else {
+        cliPrint('ERROR: Redacting an active surveillance record requires 1 Gem [✶].', 'error');
+      }
+    }
   } else if (action === 'nn' || action === 'model' || action === 'loss') {
     toggleMonitorMode();
     cliPrint(`Monitor mode set to ${monitorMode.toUpperCase()}.`, 'system');
@@ -995,6 +1012,12 @@ function openSectorMap() {
         }
       };
 
+      card.ondblclick = () => {
+        if (node.available) {
+          selectSectorNode(node.id);
+        }
+      };
+
       col.appendChild(card);
     });
 
@@ -1002,6 +1025,12 @@ function openSectorMap() {
   });
 
   container.appendChild(mapGrid);
+
+  // Auto-select first available node for immediate clarity
+  const firstAvailCard = container.querySelector('.sector-node-card.available');
+  if (firstAvailCard) {
+    firstAvailCard.click();
+  }
 
   const confirmBtn = $('btn-transit');
   if (confirmBtn) {
