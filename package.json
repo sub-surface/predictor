@@ -4,6 +4,7 @@
   "description": "A roguelike where the antagonist is trained on you.",
   "private": true,
   "scripts": {
+    "test": "node scripts/check-static-assets.mjs && node scripts/test-core.mjs && node scripts/test-game.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "preview": "wrangler dev --remote"

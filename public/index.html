@@ -1,223 +1,238 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="oled">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>THE PREDICTOR</title>
-<link rel="stylesheet" href="css/style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>THE PREDICTOR // SYSTEM ARCHIVE</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="crt-active">
+  <!-- Global VHS / Ambient Glow Filter -->
+  <div id="vhs-ambient"></div>
 
-<!-- ============ MENU SCREENS ============ -->
-<div class="screen on" id="screen-home">
-  <h1>THE <b>PREDICTOR</b></h1>
-  <div class="tag">a roguelike where the antagonist is trained on you</div>
-  <div class="mbtns">
-    <button id="mResume" style="display:none">RESUME</button>
-    <button id="mContinue" style="display:none">CONTINUE — FLOOR CHECKPOINT</button>
-    <button id="mNew">NEW RUN</button>
-    <button id="mMass" class="danger">SPECIAL: MASS MODE</button>
-    <button id="mTut" class="hot">CALIBRATION (TUTORIAL)</button>
-    <button id="mCore">THE CORE — ITS MEMORY OF YOU</button>
-    <button id="mManual">FIELD MANUAL</button>
-    <button id="mSettings">SETTINGS</button>
-    <button id="mAbandon">ABANDON CURRENT RUN</button>
-  </div>
-  <div class="mline" id="mCoreLine"></div>
-  <div class="mfoot" id="mStorage"></div>
-</div>
-
-<div class="screen" id="screen-core">
-  <h2>THE CORE</h2>
-  <div class="subpan" id="coreStats"></div>
-  <div class="subpan">
-    <h3>EXPORT / IMPORT ITS MEMORY</h3>
-    serialize the model it has built of you. paste a friend's export to fight <em>their</em> nemesis.
-    <textarea id="coreIO" spellcheck="false"></textarea>
-    <div class="rowbtns">
-      <button id="coreExport">EXPORT</button>
-      <button id="coreImport">IMPORT</button>
-      <button id="coreWipe" class="danger">WIPE ITS MEMORY</button>
-    </div>
-    <div class="smsg" id="coreMsg"></div>
-  </div>
-  <div class="rowbtns back"><button class="back">BACK</button></div>
-</div>
-
-<div class="screen" id="screen-manual">
-  <h2>FIELD MANUAL</h2>
-  <div class="subpan">
-    <h3>CASE FILE: ARI VALE</h3>
-    Ari Vale came to the lower station after the evacuation lottery named her impossible: too useful to lose,
-    too erratic to trust, too legible when frightened. Dr. Silas Venn built Omega to show its work: every route,
-    every denial, every locked door with a visible reason. The city learned to hate reasons. IONA kept the archive
-    while Ari descended through rooms that made prediction physical. By the tenth chamber, Omega no longer sounded
-    like a system. It sounded like someone who had read every draft of Ari and wanted the final version to stop moving.
-    <h3>WHAT IS HAPPENING</h3>
-    every unit that hunts you maintains a <b>model of your behavior</b>. the prediction stain marks the tile it
-    predicts you will occupy next; intensity is confidence. stand where it expected, inside its zap range,
-    and you take a hit. bump a unit from a vector it <i>did not</i> predict and it dies. predicted strikes are parried.
-    <h3>THE CORE</h3>
-    <i>Ω THE PREDICTOR</i> is persistent. it trains on every move you make, in every run, forever — death does
-    not reset it. <b>H</b> hive units and the floor-10 avatar read directly from it. its lifetime accuracy on you
-    is shown in the panel and on every death screen.
-    <h3>READOUTS</h3>
-    <b>LEG%</b> — how often recent predictions about you were right. high legibility gets you zapped, but
-    <em>≡ trust vaults</em> only open above 60%: friends need to be able to model you too.
-    <b>THE EYE ◉/○</b> — whether this floor is monitored. <em>▣ caches</em> belong to someone; the game keeps separate
-    ledgers of what you take when watched and unwatched. nothing stops you. something counts.
-    <h3>PROTOCOLS</h3>
-    Between chambers, you can override the station parameters by choosing a <b>PROTOCOL</b>. These are free
-    exploits that modify the Predictor's model, the map geometry, or your own hull integrity.
-    <h3>STRUCTURES</h3>
-    <em>♦ pact shrines</em> — commit to three public moves for a reward; while committed, everything reads you perfectly.
-    <em>THE WARDEN (floor 5)</em> — two containers, filled before you arrived, from its model of your restraint.
-    your choice is remembered for next time.
-    <h3>ENDINGS</h3>
-    kill the avatar on floor 10. how you got there decides what you became: <b>STATIC</b>, <b>THE LONG CON</b>,
-    <b>MUTUAL</b>, or <b>SURVIVOR</b>.
-  </div>
-  <div class="rowbtns back"><button class="back">BACK</button></div>
-</div>
-
-<div class="screen" id="screen-settings">
-  <h2>SETTINGS</h2>
-  <div class="subpan">
-    <div class="rowbtns">
-      <button id="sSoundBtn">SOUND: <b id="sSound">ON</b></button>
-      <button id="sFlashBtn">DAMAGE FLASH: <b id="sFlash">ON</b></button>
-      <button id="sCbBtn">COLORBLIND MODE: <b id="sCb">OFF</b></button>
-      <button id="sTips">RESET CONTEXTUAL TIPS</button>
-    </div>
-    <div class="rowbtns">
-      <button id="sExportBtn">EXPORT TURN LOG</button>
-    </div>
-    <div class="smsg" id="setMsg"></div>
-  </div>
-  <div class="rowbtns back"><button class="back">BACK</button></div>
-</div>
-
-<!-- ============ GAME ============ -->
-<div id="screen-game">
-  <div id="stage">
-    <div id="board"></div>
-    <div id="over">
-      <h3 id="overTitle"></h3>
-      <p id="overStats"></p>
-      <div class="row">
-        <button id="retry">RUN AGAIN</button>
-        <button id="toMenu" class="ghost">MENU</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- FLOATING UI -->
-  <div id="ui-layer">
-    <div id="news-pan" class="float-pan">
-      <div class="pan-tab" data-target="news-content">NEWS</div>
-      <div id="news-content" class="pan-body">
-        <div id="news-ticker">INITIALIZING SIGNAL...</div>
-      </div>
-    </div>
-
-    <header class="float-pan" id="hud-pan">
-      <div class="pan-tab" data-target="hud-content">HUD</div>
-      <div id="hud-content" class="pan-body">
-        <h1>THE <b>PREDICTOR</b></h1>
-        <div class="hud">
-          <span>FL <b id="hFloor">1</b></span>
-          <span class="hp">HULL <b id="hHp"></b></span>
-          <span class="leg">LEG <b id="hLeg">—</b></span>
-          <span class="eye" id="hEyeWrap">EYE <b id="hEye">◉</b></span>
-          <span class="ent">ENT <b id="hEnt">0</b></span>
-          <span class="gemc">GEMS <b id="hGems">0</b></span>
-          <span class="blc">TRAPS <b id="hBliss">0</b></span>
-          <span class="entc">OFF <b id="hOffswitches">0</b></span>
-          <button id="btnNoise" class="ghost" title="Noise Move [N]">◇ NOISE</button>
-          <button id="btnBliss" class="ghost" title="Arm Trap [B]">ψ TRAP</button>
-          <button id="btnContract" class="ghost" title="Negotiate Contract [C]">↹ CONTRACT</button>
-          <button id="btnOffswitch" class="ghost" title="Shutdown Unit [O]">⏻ OFF</button>
-          <button id="aMenu">MENU</button>
+  <div id="app">
+    <!-- ==================== SCREEN 1: ANSI BIOS BOOT ==================== -->
+    <div id="screen-bios" class="view-screen active">
+      <div class="bios-terminal">
+        <div id="bios-log"></div>
+        <div class="bios-prompt-row">
+          <span class="blinking-cursor">_</span>
+          <button id="btn-skip-bios" class="bios-btn">PRESS [SPACE] OR CLICK TO SKIP SEQUENCE</button>
         </div>
       </div>
-    </header>
-
-    <div class="float-pan" id="minimap-pan">
-      <div class="pan-tab" data-target="minimap-content">MAP</div>
-      <div id="minimap-content" class="pan-body">
-        <canvas id="mmap" width="100" height="100"></canvas>
-      </div>
     </div>
 
-    <div class="float-pan" id="dossier-pan">
-      <div class="pan-tab" data-target="dossier-content">DOSSIER</div>
-      <div id="dossier-content" class="pan-body">
-        <h2>PROTOCOL & CONTEXT</h2>
-        <div id="dossierContent" class="c">Waiting for signal...</div>
-      </div>
-    </div>
-
-    <div class="float-pan" id="upgrades-pan">
-      <div class="pan-tab" data-target="upgrades-content">LOGS</div>
-      <div id="upgrades-content" class="pan-body">
-        <div id="notif-area"></div>
-      </div>
-    </div>
-
-    <div class="float-pan" id="model-pan">
-      <div class="pan-tab" data-target="model-content">MODEL</div>
-      <div id="model-content" class="pan-body">
-        <h2>ITS MODEL OF YOU — <i id="modelWho">no signal</i></h2>
-        <div id="bars">
-          <div class="bar"><div class="fill"></div><div class="lbl">←</div></div>
-          <div class="bar"><div class="fill"></div><div class="lbl">↑</div></div>
-          <div class="bar"><div class="fill"></div><div class="lbl">→</div></div>
-          <div class="bar"><div class="fill"></div><div class="lbl">↓</div></div>
-          <div class="bar"><div class="fill"></div><div class="lbl">·</div></div>
+    <!-- ==================== SCREEN 2: RETRO DOS MENU ==================== -->
+    <div id="screen-menu" class="view-screen">
+      <div class="menu-container">
+        <pre class="menu-ascii">
+ ████████╗██╗  ██╗███████╗    ██████╗ ██████╗ ███████╗██████╗ ██╗ ██████╗████████╗ ██████╗ ██████╗ 
+ ╚══██╔══╝██║  ██║██╔════╝    ██╔══██╗██╔══██╗██╔════╝██╔══██╗██║██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗
+    ██║   ███████║█████╗      ██████╔╝██████╔╝█████╗  ██║  ██║██║██║        ██║   ██║   ██║██████╔╝
+    ██║   ██╔══██║██╔══╝      ██╔═══╝ ██╔══██╗██╔══╝  ██║  ██║██║██║        ██║   ██║   ██║██╔══██╗
+    ██║   ██║  ██║███████╗    ██║     ██║  ██║███████╗██████╔╝██║╚██████╗   ██║   ╚██████╔╝██║  ██║
+    ╚═╝   ╚═╝  ╚═╝╚══════╝    ╚═╝     ╚═╝  ╚═╝╚══════╝╚═════╝ ╚═╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
+        </pre>
+        <div class="menu-subtitle">// CONTINUOUS HOPFIELD ATTRACTOR & EPIPLEXIC SEQUENCE ENGINE</div>
+        
+        <div class="menu-items">
+          <button class="menu-item" id="menu-run"><span class="key">[1]</span> ENTER ACTIVE EXPEDITION <span class="tag">START RUN</span></button>
+          <button class="menu-item" id="menu-crucible"><span class="key">[2]</span> CALIBRATION CRUCIBLE <span class="tag">5-STAGE TUTORIAL</span></button>
+          <button class="menu-item" id="menu-sectors"><span class="key">[3]</span> SECTOR TRANSIT MAP <span class="tag">FACTION GRAPH</span></button>
+          <button class="menu-item" id="menu-core"><span class="key">[4]</span> CORE TELEMETRY & ATTRACTORS <span class="tag">MODEL STATUS</span></button>
+          <button class="menu-item" id="menu-options"><span class="key">[5]</span> PALETTE CONFIGURATION <span class="tag">PHOSPHOR THEME</span></button>
+          <button class="menu-item" id="menu-cli"><span class="key">[6]</span> A-9 OPERATOR TERMINAL <span class="tag">CLI DAEMON</span></button>
         </div>
-        <div id="objline">tap a unit to probe its objective</div>
+
+        <div class="menu-footer">
+          <div id="menu-core-status">CORE STATUS: MOUNTED // OBSERVATIONS: 0</div>
+          <div class="menu-hints">NAVIGATE WITH NUMBER KEYS [1-6] OR CLICK · ESC TO RESUME</div>
+        </div>
       </div>
     </div>
 
-    <div id="log-float">
-      <div id="log"><span id="logNew"></span><br><span id="logOld" class="old"></span></div>
+    <!-- ==================== SCREEN 3: ACTIVE GAMEPLAY WORKSTATION ==================== -->
+    <div id="screen-game" class="view-screen">
+      <!-- Top System Header -->
+      <header id="workstation-header">
+        <div class="brand-row">
+          <div class="brand-title">THE <b>PREDICTOR</b> <span class="brand-meta" id="status-tag">SEC 01 · COMBAT</span></div>
+          <div class="brand-controls">
+            <button id="btn-toggle-monitor" class="mini-btn" title="Toggle Neural Monitor">VIEW: NEURAL [V]</button>
+            <button id="map-toggle-btn" class="mini-btn" title="Sector Map">ROUTE MAP [M]</button>
+            <button id="theme-btn" class="mini-btn" title="Cycle Theme">THEME: OLED</button>
+            <button id="btn-menu" class="mini-btn" title="System Menu">MENU [ESC]</button>
+          </div>
+        </div>
+        <div class="hud-row">
+          <div class="hud-pill"><span>SEC</span> <b id="hud-floor">01</b></div>
+          <div class="hud-pill hull"><span>HULL</span> <b id="hud-hull">♥♥♥</b></div>
+          <div class="hud-pill leg"><span>LEG</span> <b id="hud-leg">—</b></div>
+          <div class="hud-pill core"><span>FIT</span> <b id="hud-fit">—</b></div>
+          <div class="hud-pill ent"><span>ENT</span> <b id="hud-ent">◇0</b></div>
+          <div class="hud-pill mode"><span>MOVE</span> <b id="hud-protocol">CARDINAL</b></div>
+        </div>
+      </header>
+
+      <!-- Main Workstation (Desktop: CRT Monitor Left + Operator Console Right) -->
+      <div id="workspace">
+        <!-- Left: The Scoped CRT Monitor Frame -->
+        <section id="crt-monitor-frame">
+          <div class="monitor-bezel">
+            <div class="monitor-screen">
+              <!-- Internal Scoped Scanline & Phosphor Filter -->
+              <div class="monitor-scanlines"></div>
+
+              <!-- Main Board Canvas -->
+              <main id="stage">
+                <canvas id="board-canvas"></canvas>
+              </main>
+
+              <!-- Alternate View: Neural Diagnostic Suite -->
+              <div id="neural-view-container" style="display:none">
+                <div class="neural-panel-header">
+                  <span>NEURAL TOPOLOGY & EPIPLEXIC INTEGRATOR</span>
+                  <span id="daemon-tag">A-9: LINKED</span>
+                </div>
+                <!-- SVG Network Topology -->
+                <div class="neural-card">
+                  <div class="card-title">SYNAPTIC TOPOLOGY [ATTRACTOR BASIN]</div>
+                  <svg id="neural-net" viewBox="0 0 280 120" preserveAspectRatio="xMidYMid meet"></svg>
+                  <div class="node-labels">
+                    <span>INPUT [TOKENS]</span>
+                    <span>ATTRACTOR BASIN</span>
+                    <span>P(NEXT MOVE)</span>
+                  </div>
+                </div>
+                <!-- Real-Time Epiplexity Loss Curve -->
+                <div class="neural-card">
+                  <div class="card-title-row">
+                    <span>EPIPLEXIC LOSS CURVE [AUC = S_T]</span>
+                    <span class="epiplexity-val" id="epiplexity-meter">S_T: 0.0 bits</span>
+                  </div>
+                  <canvas id="loss-canvas" width="280" height="85"></canvas>
+                  <div class="loss-meta">
+                    <span>UNPREDICTABLE (H_T) <b id="current-entropy">2.32 b</b></span>
+                    <span>LEARNED STRUCTURE (S_T) <b id="current-epiplexity">0.00 b</b></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Telemetry Status Bar -->
+          <div id="terminal-bar">
+            <div id="log-new">INITIALIZING SUBJECT CALIBRATION...</div>
+            <div id="log-old">MOVE WITH WASD / ARROWS. SPACE TO WAIT.</div>
+          </div>
+
+          <!-- Keyboard Controls Quick Legend -->
+          <div class="controls-legend">
+            <span><kbd>WASD</kbd>/<kbd>ARROWS</kbd> move</span>
+            <span><kbd>SPACE</kbd> wait/favor</span>
+            <span><kbd>N</kbd> noise [◇]</span>
+            <span><kbd>K</kbd> leap</span>
+            <span><kbd>V</kbd> neural</span>
+            <span><kbd>M</kbd> map</span>
+            <span><kbd>~</kbd> terminal</span>
+          </div>
+        </section>
+
+        <!-- Right: The Integrated Operator Terminal (A-9) -->
+        <aside id="terminal-console">
+          <div class="cli-header">
+            <span class="cli-title"><span class="cli-status-led"></span> A-9 OPERATOR TERMINAL [ttyS0]</span>
+            <div class="cli-win-controls">
+              <button id="cli-min-btn" class="cli-win-btn">−</button>
+              <button id="cli-close-btn" class="cli-win-btn">×</button>
+            </div>
+          </div>
+          <div id="cli-output"></div>
+          <div class="cli-input-row">
+            <span class="cli-prompt">A-9@core:~$</span>
+            <input type="text" id="cli-input" placeholder="try 'help', 'nn', 'map', 'weights', 'epiplexity'..." autocomplete="off" spellcheck="false">
+          </div>
+          <div class="cli-quick-actions">
+            <button class="cli-chip" onclick="execCli('nn')">NN</button>
+            <button class="cli-chip" onclick="execCli('map')">MAP</button>
+            <button class="cli-chip" onclick="execCli('weights')">WEIGHTS</button>
+            <button class="cli-chip" onclick="execCli('epiplexity')">EPIPLEXITY</button>
+            <button class="cli-chip" onclick="execCli('theme')">THEME</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- ==================== POPUP: RUN CONDITIONS SETUP ==================== -->
+    <div class="overlay" id="pre-run-overlay">
+      <div class="modal run-modal">
+        <div class="modal-header">
+          <h2>EXPEDITION PROTOCOL // INITIAL LOADOUT</h2>
+          <button class="close-btn" id="pre-run-close">×</button>
+        </div>
+        <p class="run-desc">Select operative specialization. Adversary models your habits across all chambers.</p>
+        
+        <div class="class-selector">
+          <div class="class-card selected" data-class="operative">
+            <div class="class-name">OPERATIVE [BALANCED]</div>
+            <div class="class-stats">♥ 3 HULL · ◇ 1 ENTROPY · CARDINAL</div>
+            <div class="class-info">Standard neural profile. Reliable chassis with optimal learning resistance.</div>
+          </div>
+          <div class="class-card" data-class="scout">
+            <div class="class-name">SCOUT [ANOMALOUS]</div>
+            <div class="class-stats">♥ 2 HULL · ◇ 1 ENTROPY · KNIGHT LEAP</div>
+            <div class="class-info">Starts with Knight Leap installed. Bypasses cardinal parry; fragile hull.</div>
+          </div>
+          <div class="class-card" data-class="cryptographer">
+            <div class="class-name">CRYPTOGRAPHER [STOCHASTIC]</div>
+            <div class="class-stats">♥ 3 HULL · ◇ 3 ENTROPY · EMP COUNTER</div>
+            <div class="class-info">High entropy capacity. Prediction strikes trigger automatic EMP stun shockwave.</div>
+          </div>
+        </div>
+
+        <div class="modal-btns">
+          <button class="primary" id="btn-start-configured-run">COMMENCE RUN</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== POPUP: FTL SECTOR TRANSIT MAP ==================== -->
+    <div class="overlay" id="sector-overlay">
+      <div class="modal sector-modal">
+        <div class="modal-header">
+          <h2 id="sector-modal-title">SECTOR TRANSIT MAP // FACTION ROUTE</h2>
+          <button class="close-btn" id="sector-close">×</button>
+        </div>
+        <p class="sector-desc" id="sector-modal-desc">Select your destination chamber. Only forward-connected nodes are reachable.</p>
+        <div id="sector-nodes-container"></div>
+        <div id="sector-detail-brief" class="sector-brief">SELECT AN AVAILABLE HIGHLIGHTED NODE TO INITIATE TRANSIT</div>
+        <div class="modal-btns">
+          <button class="primary" id="btn-transit">CONFIRM TRANSIT</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== POPUP: GENERIC SYSTEM MODAL ==================== -->
+    <div class="overlay" id="modal-overlay">
+      <div class="modal">
+        <h2 id="modal-title">THE PREDICTOR</h2>
+        <p id="modal-body">A roguelike where the antagonist is trained on you.</p>
+        <div class="telemetry" id="modal-telemetry" style="display:none"></div>
+        <div class="modal-btns" id="modal-btns">
+          <button class="primary" id="btn-primary">BEGIN</button>
+          <button id="btn-secondary" style="display:none">CANCEL</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <section id="brief" class="float-pan">
-    <div class="pan-tab" data-target="brief-content">BRIEF</div>
-    <div id="brief-content" class="pan-body">
-      <div id="briefKicker">TRACE</div>
-      <h2 id="briefTitle">No Signal</h2>
-      <p id="briefBody">The chamber is quiet.</p>
-    </div>
-  </section>
-
-  <div id="acts" style="display:none"></div>
-
-  <div id="pad">
-    <button class="blank"></button><button data-d="1">↑</button><button class="blank"></button>
-    <button data-d="0">←</button><button data-d="4">·</button><button data-d="2">→</button>
-    <button class="blank"></button><button data-d="3">↓</button><button class="blank"></button>
-  </div>
-</div>
-
-  <footer>
-    <kbd>←↑→↓</kbd> move · <kbd>space</kbd> wait · bump to strike · tap a unit to probe it · <kbd>esc</kbd> menu<br>
-    <kbd>N</kbd> noise · <kbd>B</kbd> arm trap · <kbd>C</kbd> contract · <kbd>O</kbd> off-switch<br>
-    the stain is its belief about you. don't be right.
-  </footer>
-</div>
-
-<script src="js/world.js"></script>
-<script src="js/save.js"></script>
-<script src="js/audio.js"></script>
-<script src="js/core.js"></script>
-<script src="js/game.js"></script>
-<script src="js/render.js"></script>
-<script src="js/tutorial.js"></script>
-<script src="js/menu.js"></script>
-<script src="js/input.js"></script>
-<script src="js/main.js"></script>
+  <!-- Scripts in strict dependency order -->
+  <script src="js/save.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>

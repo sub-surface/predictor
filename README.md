@@ -1,54 +1,62 @@
 # THE PREDICTOR
 
 A roguelike where the antagonist is trained on you. Every unit hunting you maintains a live,
-visible model of your behavior; the persistent Core trains on every move across every run and
+visible model of your behavior; the persistent Core trains on every action across every run and
 never resets on death. Legibility is the central currency: it gets you zapped by adversaries
 and trusted by everything else.
 
-## Run it
+## Quickstart
 
-No build step, no dependencies. Either:
+No build step, no external dependencies.
 
-- Open `index.html` directly in a browser, or
-- Serve the folder (`npx serve .` or `python3 -m http.server`) and open the printed URL.
+```bash
+# Verify test suite
+npm test
 
-Progress (the Core's memory of you, floor checkpoints, settings) persists via the best
-available backend: Claude artifact storage → `localStorage` → in-memory for the session.
-The main menu shows which backend is live.
+# Run locally
+npx wrangler dev
+# or: npx serve public
+# or: python3 -m http.server -d public
+```
 
-First time: take **CALIBRATION** from the menu — five short sandboxed rooms (~2 minutes).
+Open the printed URL in any browser.
+
+First-time launch boots automatically into the **CALIBRATION CRUCIBLE** (5 short, walled 5×5 micro-chambers).
 
 ## Controls
 
 | Input | Action |
 |---|---|
-| Arrows / WASD / swipe | move (moving into a unit attacks it) |
-| Space / `.` / tap @ | wait |
-| Tap a unit | probe its objective and model |
-| `Esc` | menu / resume |
-| `R` (when dead) | run again |
+| `WASD` / Arrows / Swipe | Move (moving into an enemy strikes it) |
+| `Space` / `.` / Tap `@` | Wait |
+| `N` | Noise move — spend 1◇ entropy to take a random, unlearnable step |
+| `M` | Toggle audio synthesis |
+| `Esc` / Tap `SYSTEM` | System diagnostics & Core memory inspection |
 
-• Between floors: choose a **PROTOCOL** to override station logic.
+## Reading the Board
 
-## Reading the board
+* **Orange stains:** mark where each unit predicts you will be next. Intensity indicates confidence.
+* **Stand where predicted:** within an enemy's range and you take 1 damage (or 2 if your legibility exceeds 75%).
+* **Strike from an unpredicted vector:** and the unit is instantly destroyed.
+* **Strike from a predicted vector:** and your strike is **parried and reflected** back at you.
+* **LEG%:** rolling accuracy of recent predictions made about you. `≡` Trust gates only open above 60%.
+* **Floor 5 Warden:** two containers (`◻` transparent, `◼` opaque), filled before you arrive based on the Core's empirical model of your restraint.
+* **Floor 10 Avatar:** the Core embodied, firing with full context-mixing across all your past runs.
 
-Orange stains mark where each unit predicts you'll be — intensity is confidence, the dashed
-cell is the strongest belief on the board. Stand where it expected, in range, and you're zapped;
-strike from a vector it didn't predict and it dies. `LEG%` is how often recent predictions about
-you were right. `≡` vaults open only above 60% — trust requires being modelable. The eye `◉/○`
-marks whether the floor is monitored; `▣` caches are free to take either way, and the game keeps
-two ledgers. The Warden waits on floor 5 with two containers it filled before you arrived. The
-Avatar waits on floor 10 with everything the Core knows.
-
-## Repo
+## Architecture
 
 ```
-index.html       app shell
-css/style.css    presentation
-js/              save, audio, core (the persistent model), game, render,
-                 tutorial, menu, input, main — classic scripts, load order matters
-docs/SPEC.md     full design specification: implemented systems + roadmap
+public/
+├── index.html        Minimal single-page terminal shell
+├── css/style.css     High-contrast phosphor CRT aesthetic
+└── js/
+    ├── save.js       Storage adapter (localStorage / artifact storage / in-memory)
+    ├── core.js       The persistent context-mixing sequence model (Order-0/1/2)
+    ├── audio.js      WebAudio synthesizer with visceral Pre-Echo chimes
+    ├── game.js       Deterministic state engine & 5-stage crucible progression
+    ├── render.js     Fast, single-pass DOM board and telemetry renderer
+    ├── input.js      Keyboard, swipe, and touch interactions
+    └── main.js       Bootloader
 ```
 
-See `docs/SPEC.md` for the design rationale, exact numbers, balance notes, and the
-proposed-systems roadmap (persona masks, contracts, mesa-spawners, neural core, daily seeds).
+See `docs/SPEC.md` for the full ludological foundation, mechanics specification, and master roadmap.

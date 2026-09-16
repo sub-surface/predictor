@@ -1,52 +1,34 @@
 'use strict';
-/* All audio is synthesized. PITCH maps the five actions (←↑→↓·) to notes;
-   the "pre-echo" plays the predicted action's note before the player acts. */
+/* All audio is synthesized via WebAudio.
+   PITCH maps the five actions (←, ↑, →, ↓, ·) to distinct frequencies.
+   The "pre-echo" plays the predicted action's chime BEFORE the player acts. */
 let AC = null;
 const PITCH = [330, 392, 440, 494, 262];
 
-function tone(f, dur, g, type){
-  if(!S.sound) return;
-  try{
+function tone(freq, dur, gainVal, type = 'sine') {
+  if (!S.sound) return;
+  try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-    if(AC.state === 'suspended') AC.resume();
-    const o = AC.createOscillator(), gn = AC.createGain();
-    o.type = type || 'sine'; o.frequency.value = f;
-    gn.gain.setValueAtTime(g, AC.currentTime);
-    gn.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
-    o.connect(gn); gn.connect(AC.destination);
-    o.start(); o.stop(AC.currentTime + dur);
-  }catch(e){}
+    if (AC.state === 'suspended') AC.resume();
+    const osc = AC.createOscillator();
+    const gain = AC.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(gainVal, AC.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+    osc.connect(gain);
+    gain.connect(AC.destination);
+    osc.start();
+    osc.stop(AC.currentTime + dur);
+  } catch (e) {}
 }
 
 const SFX = {
-  move:  tok => tone(PITCH[tok], .05, .03),
-  echo:  tok => tone(PITCH[tok], .09, .018),
-  hit:   ()  => tone(80,  .18, .06, 'sawtooth'),
-  kill:  ()  => tone(120, .12, .05, 'square'),
-  pick:  ()  => tone(587, .07, .025),
-  ui:    ()  => tone(262, .05, .02),
-};
-
-const Music = {
-  bgm: null,
-  start(){
-    if(!S.sound) return;
-    if(this.bgm) clearInterval(this.bgm);
-    this.bgm = setInterval(() => {
-      if(!G.active || G.over || !S.sound) return;
-      // Generative ambient drone based on legibility
-      const leg = Core.accuracy();
-      const baseFreq = 55 + (leg || 0) * 0.5; // Drone gets higher pitched if legible
-      tone(baseFreq, 2.0, 0.015, 'triangle');
-      // Random ping based on prediction top choice
-      const topAction = Core.predictOne();
-      if(topAction !== null && Math.random() < 0.3){
-        tone(PITCH[topAction]*2, 0.4, 0.01, 'sine');
-      }
-    }, 2000);
-  },
-  stop(){
-    if(this.bgm) clearInterval(this.bgm);
-    this.bgm = null;
-  }
+  move: tok => tone(PITCH[tok], 0.05, 0.03, 'sine'),
+  echo: tok => tone(PITCH[tok], 0.12, 0.025, 'triangle'), // Pre-echo chime
+  hit:  ()  => tone(85, 0.18, 0.08, 'sawtooth'),
+  kill: ()  => tone(130, 0.14, 0.06, 'square'),
+  pick: ()  => tone(587, 0.08, 0.03, 'sine'),
+  gate: ()  => tone(523, 0.15, 0.04, 'triangle'),
+  ui:   ()  => tone(262, 0.05, 0.02, 'sine')
 };

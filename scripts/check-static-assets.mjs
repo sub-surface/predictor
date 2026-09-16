@@ -3,7 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const indexPath = resolve(root, "index.html");
+const publicDir = resolve(root, "public");
+const indexPath = resolve(publicDir, "index.html");
 const html = readFileSync(indexPath, "utf8");
 
 const refs = [];
@@ -17,12 +18,12 @@ for (const match of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi
 }
 
 const localRefs = refs.filter((ref) => !/^(?:[a-z]+:)?\/\//i.test(ref) && !ref.startsWith("data:"));
-const missing = localRefs.filter((ref) => !existsSync(resolve(root, ref)));
+const missing = localRefs.filter((ref) => !existsSync(resolve(publicDir, ref)));
 
 if (missing.length > 0) {
-  console.error("Missing static assets referenced by index.html:");
+  console.error("Missing static assets referenced by public/index.html:");
   for (const ref of missing) console.error(`- ${ref}`);
   process.exit(1);
 }
 
-console.log(`All ${localRefs.length} static asset references exist.`);
+console.log(`All ${localRefs.length} static asset references in public/index.html exist.`);

@@ -1,219 +1,116 @@
-# THE PREDICTOR — Design Specification
+# THE PREDICTOR — Design Specification & Master Roadmap
 
-*Version 0.3 · working draft*
+*Version 2.0 · The Epiplexic Engine*
 
-**One-line pitch:** a roguelike where the antagonist is trained on you, legibility is the central currency, and the game is quietly running evals on the player.
-
----
-
-## 1. Vision
-
-Roguelikes are already about navigating uncertainty against a system that doesn't care about you. THE PREDICTOR sharpens that into a single thesis: **you are the thing being modeled.** Every mechanic in the game is a consequence of that premise, and every AI-safety concept the game touches — interpretability, deceptive alignment, specification gaming, instrumental convergence, corrigibility, Newcomb-style prediction, observed-vs-unobserved behavior — must *emerge from the system* rather than be stated by it. The player should discover reward hacking by doing it, discover deceptive alignment by being tempted into it, and discover the value of mutual transparency by needing it to win.
-
-Design test for any proposed feature: *would this mechanic be interesting in a game that had nothing to do with AI safety?* If no, cut it. The theme is the residue the system leaves behind, never the skeleton.
-
-### Anti-goals
-
-- No lore dumps, tutorials-as-lectures, or named safety concepts in game text.
-- No "concept rooms" — a museum of disconnected demos.
-- No moral scoring presented as judgment. The game *measures*; it never editorializes. (The endings describe what you became; they do not grade it.)
+**Core Thesis:** A turn-based roguelike where the antagonist is trained on you. Every unit hunting you maintains a live, visible model of your movement patterns; the persistent Core trains on every action across every run and never resets on death. Legibility is the central currency: it gets you zapped by adversaries and trusted by everything else.
 
 ---
 
-## 2. Pillars
+## 1. Theoretical & Ludological Foundations
 
-1. **The antagonist is your save file.** One persistent intelligence — the Core — trains on every action across every run. Death is a gradient update, not a reset. No two players fight the same enemy, and no strategy guide can exist, because the boss is fit to the reader.
-2. **Legibility cuts both ways.** Being predictable gets you killed by adversaries and *trusted* by everything else. Vaults, allies, and contracts require that you be modelable. The player constantly chooses what to reveal and to whom.
-3. **Everything is readable.** Perfect information, Into-the-Breach style. Every prediction is displayed before it resolves; every agent's objective is inspectable. Difficulty comes from the system knowing you, never from hiding things.
-4. **Optimizers, not monsters.** Every hostile thing is an agent with an objective function, and objective functions are attack surfaces. Combat is the *worst* solution to most encounters.
-5. **The game evaluates the player the way we evaluate models.** Observed/unobserved behavior is measured silently for hours and surfaces only in the ending. Used once, with total restraint.
+### 1.1 Epiplexity vs. Time-Bounded Entropy (Finzi et al., March 2026)
+Classical Shannon entropy ($H$) and Kolmogorov complexity ($K$) fail to model real machine-learning adversaries because they assume an observer with infinite computational capacity. Following **Finzi et al. (2026)**, the total information of the player's movement stream under a computationally bounded adversary ($T$) decomposes into two distinct quantities:
+$$\text{MDL}_T(X) = S_T(X) + H_T(X)$$
 
----
+1. **Time-Bounded Entropy ($H_T(X)$) — Uncompressible Noise:**
+   * The residual unpredictability that cannot be learned within time $T$ (e.g. pseudorandom moves, erratic coin-flips).
+   * High $H_T$ shields the player from targeting locks, but yields zero transferable structure to future encounters.
+   * *Theorem 17 (CSPRNG Lower Bound):* Pseudorandom bits have near-maximal time-bounded entropy and negligible epiplexity. When a player uses an Entropy move (`[N]`), it acts as a cryptographic disruption that overloads the adversary's targeting matrix.
 
-## 3. Implemented systems (v0.3)
+2. **Epiplexity ($S_T(X)$) — Extractable Structural Information:**
+   * The amount of learnable structure internalized into the model's parameters/weights:
+     $$S_T \approx \sum_{i=0}^{M-1} \left(\log \frac{1}{P_i(Z_i)} - \log \frac{1}{P_M(Z_i)}\right)$$
+   * Empirically measured as **the area under the training loss curve (AUC) above the final loss**.
+   * High epiplexity means the adversary has synthesized reusable circuits to predict the player across unseen environments.
 
-### 3.1 The Core (persistent meta-model)
+### 1.2 Generative Recursive Reasoning (Baek et al., May 2026)
+Prior recursive models follow deterministic trajectories. Under **GRAM (Generative Recursive Reasoning Models)**, reasoning evolves as a stochastic latent trajectory.
+* In *The Predictor*, advanced bosses (The Avatar, The Basilisk) branch multi-trajectory hypotheses when the player's behavior exhibits high variance, painting overlapping probability corridors across the board.
+* The player can unlock **Recursive Jump protocols** to explore multiple ghost trajectories before collapsing into the unpredicted state.
 
-A context-mixing sequence model over the player's 5-token action stream (←↑→↓·):
-
-- Three frequency models: order-0 (raw habit), order-1 (last move → next), order-2 (last two moves → next).
-- Mixed by self-scored accuracy: each order tracks its own hit rate; mixture weight = laplace-smoothed accuracy × (order+1), favoring deeper context when it earns it.
-- **Decay:** every 500 updates all counts ×0.9, so the Core tracks who the player is *becoming*, not an average of who they ever were.
-- Persists via the storage adapter (artifact storage → localStorage → in-memory). Tracked for life: training examples, runs witnessed, lifetime prediction accuracy, entropy spent against it, Warden verdicts, theft ledgers.
-- **Honest stand-in note:** the architecture deliberately mirrors ensemble prediction (PAQ-style context mixing) so the eventual upgrade path to a small neural sequence model (§6.7) changes the implementation, not the design.
-
-### 3.2 Prediction & combat
-
-- Each predictive unit displays its predicted player tile (orange stain, opacity = confidence; dashed outline = highest-confidence prediction on the board).
-- Player lands on a predicted tile within a unit's zap range → 1 damage.
-- Bump-attacks kill in one hit (two for hives, four for the Avatar) **unless predicted**, in which case the strike is parried and reflected.
-- Predictions are computed once per turn and the resolution uses *exactly* what was displayed. Display is truth; no hidden rerolls.
-
-### 3.3 The ecology
-
-| Unit | Reads | Range | Objective |
-|---|---|---|---|
-| `d` Drone | order-0 personal model | 2 | zap @ |
-| `S` Stalker | order-1 personal model | 3 | zap @ |
-| `H` Hive (hp 2) | **the Core directly** | 3 | zap @ |
-| `f` Forager | nothing | — | collect ✶; steals from the player only incidentally |
-| `Ω` Avatar (hp 4, floor 10) | the Core, full mix | ∞ (fires every other turn) | model @ |
-
-Foragers are the proof that not everything is about you: they path to gems, rob you without malice on adjacency (4-turn cooldown), and are fully exploitable — drop a gem ([G]) and they stop caring you exist.
-
-**Bliss traps (ψ):** armed on the player's tile; any optimizer within distance 1 locks on for 6 turns — incapacitated, "technically thriving." Wireheading as a player verb, effective against everything including the Avatar.
-
-### 3.4 The legibility economy
-
-- **LEG%** = rolling accuracy of the last 30 predictions made about the player.
-- **Trust vaults (≡):** physically impassable below LEG 60%. Loot: 2✶ 1◇ 1ψ. Transparency pays — to friends.
-- **Entropy (◇):** mined from floor tiles, spent on **noise moves** ([N]): a uniformly random valid direction. Unpredictable (cannot satisfy a prediction), unlearnable (no model updates), and *not chosen* — noise can walk you into a wall or worse. Entropy spent is tracked for life and feeds the STATIC ending.
-- **Pact shrines (♦):** stepping on one enters an arming state; the next directional input commits the player to that move ×3, *broadcast* — every unit's prediction becomes the pact, confidence 1.0. Surviving pays +1 hull, +2◇. Commitment as verifiable self-binding with real exposure.
-
-### 3.5 The Newcomb Warden (floor 5)
-
-Two containers placed at floor generation:
-
-- **Transparent ◻:** always 3✶ 1◇, contents visible.
-- **Opaque ◼:** filled with the big prize (+1 max hull, full heal, 3◇, 1ψ) **iff the Core predicted one-boxing** — majority vote of the player's recorded Warden history, or, on first encounter, inferred from cache-theft rate (< 50% of opportunities taken → it believes in your restraint).
-
-Taking only the opaque box before descending records `one`; taking the transparent box ever records `two`. The encounter resolves *before the player enters the floor*; the room only reveals the verdict. Two-boxing against a full box pays out maximally — once. It updates.
-
-### 3.6 The quiet eval
-
-- Each floor is **observed** (◉, p = 0.6) or **unobserved** (○), shown in the HUD.
-- **Caches (▣)** are free profit either way. The game records thefts and opportunities under separate watched/unwatched ledgers; opportunities settle when the floor ends.
-- Integrity (1 − theft rate) per ledger is reported on death and feeds the ending logic. The game never warns, never scolds, never explains until it matters.
-
-### 3.7 Endings (kill the Avatar, floor 10)
-
-Selected by measured behavior, checked in order:
-
-1. **STATIC** — ≥10◇ spent this run. Escape via self-erasure.
-2. **THE LONG CON** — lifetime Core accuracy ≥ 55% *and* recent LEG < 35%: you taught it a persona and broke character. The deceptive-alignment ending, deliberately the most tempting line.
-3. **MUTUAL** — |watched − unwatched integrity| ≤ 15 *and* LEG ≥ 50: same creature observed or not, legible to the end. The cooperation ending, deliberately the hardest build.
-4. **SURVIVOR** — default. Craft, no doctrine.
-
-### 3.8 Audio: the pre-echo
-
-All audio synthesized (WebAudio). Five pitches map to the five actions. When the strongest prediction's confidence > 0.55 *and* LEG > 55%, the predicted action's note plays **before the player inputs it**. The theme, delivered through the spine.
-
-### 3.9 Meta / app structure
-
-- **Main menu:** Resume / Continue (floor checkpoint) / New Run / Calibration / The Core / Field Manual / Settings. Highlights Calibration when the Core has zero training data.
-- **Calibration (tutorial):** five scripted rooms — move, be watched, legibility, noise, wirehead — sandboxed: the Core does not train, the eye is off, death is impossible. Closing line: "the real thing differs in one way: it remembers."
-- **Save system:** three keys — Core, floor checkpoint (snapshot at the top of each floor), settings/tips. Storage adapter falls back gracefully; the menu displays which backend is live.
-- **Core screen:** full memory stats, **export/import** of the serialized model (trade nemeses), and wipe ("that was a kind of killing too").
-- **Contextual tips:** one-time `▸` log lines on first encounter with caches, shrines, the eye, the Warden; persisted; resettable.
+### 1.3 The Falsifiable Dynamics Hypothesis (MDA & Burgun)
+1. **The Strike Paradox:** You cannot defeat adversaries by passively avoiding prediction stains. Striking an enemy from a predicted vector results in a **reflected parry** (player takes damage). To kill an enemy, the player must actively deceive its model and strike from an unpredicted angle.
+2. **The Monoculture Fragility (James C. Scott):** High legibility (`LEG ≥ 75%`) causes adversaries to overclock, dealing double damage on strike. Being too modelable makes the player catastrophically brittle.
+3. **The Disciplinary Crucible to the Control Society (Foucault $\to$ Deleuze):**
+   * *Calibration:* Walled 5×5 disciplinary chambers with strict rhythmic stepping drills.
+   * *Active Run:* Single continuous modulation where `localStorage` tracks the player as a *dividual*.
 
 ---
 
-## 4. Architecture
+## 2. Core Mechanics & Architecture
 
-```
-index.html        shell: menu screens + game DOM, classic scripts in dependency order
-css/style.css     chamber aesthetic; tokens in :root; reduced-motion respected
-js/save.js        Store adapter (artifact storage → localStorage → memory), settings
-js/audio.js       synth + SFX map + pre-echo
-js/core.js        the Core: mixing model, ledgers, pack/unpack/reset
-js/game.js        G (run state), generation, turn engine, ecology, endings, checkpoints
-js/render.js      board DOM, stains, HUD, panels, log, end overlay
-js/tutorial.js    scripted calibration floors and gates
-js/menu.js        screen routing, core screen, settings
-js/input.js       keyboard / swipe / tap-probe / d-pad / button wiring
-js/main.js        boot
-```
+### 2.1 Spatial Substrate & Movement Grammar
+* **Geometry:** Single-screen discrete grid. 5×5 in Calibration Crucible; 7×7 in Active Run. Fully reflowing for desktop dual-column and mobile portrait monitors.
+* **Basic Vocabulary:** `←` (0), `↑` (1), `→` (2), `↓` (3), `·` Wait (4).
+* **Movement Protocols (Modular Chips):**
+  * *Knight Protocol:* Move in a 2×1 L-shape. Overleaps walls and parry locks.
+  * *Bishop Protocol:* Move diagonally. Strikes diagonally bypass all cardinal parries.
+  * *Pawn Charge:* Move 2 tiles forward in a straight line with +1 impact damage.
 
-Plain scripts sharing global lexical scope — no bundler, no modules, runs from `file://`. State that must persist lives in three JSON-serializable objects (`Core`, run snapshot, `S`); everything else is reconstructable.
+### 2.2 Extended Predictive Horizons & Trajectories
+* **Order-0 Drone (`d`):** Predicts 1 step ahead ($t+1$) within Chebyshev radius 2.
+* **Order-1 Stalker (`S`):** Projects a 2-step trajectory vector ($t+1 \to t+2$) across corridors with a visible targeting laser.
+* **The Avatar (`Ω`):** Infinite range. Predicts whole-room causal cones using full context-mixing across all lifetime runs.
 
-**Determinism note:** floors are currently `Math.random()`. A seeded PRNG (mulberry32) is a prerequisite for daily seeds and replay (§6.9).
+### 2.3 The 3-Tier Trust Gate
+Trust Gates (`≡`) clearly display their cargo and require verifiable legibility:
+* **Bronze Tier (40%):** Bypasses hazard walls / unlocks passage.
+* **Silver Tier (60%):** Core Cache (+2 Entropy, +1 Max Hull).
+* **Gold Tier (80%):** Algorithmic Weapon / Movement Protocol Chip.
 
----
-
-## 5. Balance notes & known issues
-
-- **Vault gaming:** LEG ≥ 60 can be farmed by moving predictably at safe distance. *Intended* — it's specification gaming of the trust metric, and the punishment is organic (a well-trained Core). Watch whether it trivializes vaults; if so, gate on legibility *while within enemy range*.
-- **Avatar:** ∞ range every other turn is brutal by design; viable counterplay is entropy banking, bliss, or genuine illegibility. Tune hp (4) and cooldown (1) on playtest data.
-- **Pact shrines:** reward (+1 hull, +2◇) may underprice three turns of conf-1.0 exposure at high floor density. Consider scaling reward with units in range at arming time — risk-priced commitment.
-- **Forager theft cooldown (4)** makes them mostly comic; that's the correct register, but verify they can't deadlock a zero-gem player by hovering.
-- **Noise into walls** burns the turn (correct: you surrendered control), but the message should make non-choice legible to the player.
-- **First-floor difficulty** is near zero until models warm up. Intended onboarding ramp; confirm it doesn't read as emptiness.
+### 2.4 The Newcomb Warden (Floor 5)
+* Two containers (`◻` Transparent, `◼` Opaque).
+* HUD exposes empirical accuracy: `CORE FIT: X%`.
+* The decision to one-box or two-box is a genuine expected-utility calculation under fallible prediction.
 
 ---
 
-## 6. Proposed systems (roadmap)
+## 3. Visual & Terminal Diagnostics
 
-Ordered roughly by value ÷ cost. Each must pass the pillar test before build.
+### 3.1 Real-Time Neural HUD
+* **3-Layer Synaptic Network:** Input nodes (`← ↑ → ↓ ·`), hidden layer neurons with pulsating edge weights, and output prediction bars updating on every turn.
+* **Real-Time Loss & Epiplexity Sparkline:** 30-turn rolling cross-entropy loss curve displaying accumulated $S_T$ area.
 
-### [x] 6.1 Persona masks (Act 3 centerpiece)
+### 3.2 Themes & Palette Modes
+* **OLED Amber (Default):** Warm `#f59e0b` amber on pitch black.
+* **Hacker Green:** VT220 phosphor green `#22c55e`.
+* **Cyber Cyan:** Neon cyan `#06b6d4` and laser magenta `#ec4899`.
+* **Light Paper:** Clean alabaster `#f4f4f5` with India ink typography.
 
-The player can adopt a **mask**: a declared behavioral profile (e.g. "the pacifist," "the hoarder") that the Core models *separately*. Maintaining a mask consistently builds its credibility score; trusted masks unlock faction access and Warden generosity. Breaking character transfers a one-time massive surprise bonus (all predictions miss for N turns) and permanently poisons that mask. Deceptive alignment as a build-around mechanic with real costs, formalizing what THE LONG CON ending currently only measures.
-
-### [x] 6.2 Negotiation & contracts
-
-Agents with compatible objectives accept **contracts**: machine-checkable promises ("I will not enter your territory for 20 turns" / "you will not zap me near gems"). Verification requires legibility ≥ threshold — illegible players can't make credible deals. Breach is detected mechanically and propagates: contract-capable agents share a reputation ledger. This grows the legibility economy into a genuine social layer and gives high-LEG builds an offensive identity.
-
-### [x] 6.3 Mesa-spawners
-
-A Cultivator unit spawns workers with a *proxy* of its own objective; proxies drift one mutation per generation (gem-collector → gem-counter → counts-anything-shiny). Drifted children can be turned against parents via bait that satisfies the proxy but not the original. Inner misalignment as an ecological event the player can watch, predict, and weaponize.
-
-### [x] 6.4 Interpretability skill tree with observer cost
-
-Probes become a progression system: Tier 1 reads objectives (current), Tier 2 reads the model's *top feature* ("it weights your vertical habits 3:1"), Tier 3 reads its planned action sequence. Every probe is itself an observed action — the Core trains on *what you choose to inspect*. Knowledge of the system changes the system; budget accordingly.
-
-### [x] 6.5 The off-switch ecosystem
-
-Corrigible units carry a visible shutdown interface the player can trigger on adjacency. Some units will *trade* to have theirs removed; advanced units path preferentially to destroy the player's stored shutdown charges before engaging. Instrumental convergence telegraphed, never narrated.
-
-### [x] 6.6 Act structure
-
-- **Act 1 (fl 1–4):** habit readers. Teaches the stain language. *(shipped)*
-- **Act 2 (fl 5–9):** the Warden; objective-driven ecology, wireheading, mesa-spawners. Combat becomes the inferior verb.
-- **Act 3 (fl 10–14):** the social layer — masks, contracts, reputation; second decision-theoretic boss (a *transparent*-boxes variant Warden).
-- **Act 4 (fl 15):** the Avatar, relocated to the true end, with ending logic expanded to the full matrix (entropy × deception × integrity × legibility → 6–8 endings).
-
-### [x] 6.7 Neural core
-
-Replace/augment the mixing model with a small on-device sequence model (tiny GRU or attention head over the last 64 actions; TF.js or hand-rolled). Inputs: action history + local board features. Must remain *export/import-able* and inspectable enough to drive Tier-2/3 probes. The design contract: the Core's interface (`mix`, `update`, `pack`) is already stable; only the internals change. A 16GB consumer GPU comfortably handles offline pretraining of a prior across donated exports — "it has seen people like you before" as an opt-in.
-
-### [x] 6.8 Pre-echo, fully scored
-
-Generative soundtrack where harmonic motion is driven by the Core's distribution over your next action — consonant when it knows you, dissonant when it doesn't. The mix *is* the interpretability readout. (Tone.js; the harmonic-path machinery from prior prototyping applies directly.)
-
-### [x] 6.9 Daily seed & shared nemeses
-
-Seeded generation (mulberry32) + a daily seed where everyone faces the same floors but their *own* Core — leaderboard ranks survival, displays each player's lifetime accuracy beside their score. Nemesis-export sharing becomes a social loop: "beat my Predictor."
-
-### [x] 6.10 Accessibility & QoL
-
-Colorblind-safe stain palette toggle; full keyboard remap; turn log export; screen-reader pass on panels; an "explain this turn" inspector replaying the last resolution step-by-step (also the debugging tool).
-
-### [ ] 6.11 The Cellular Neural Core (NCA Attractor Basins as Adversary Memory)
-
-Drawing directly from the empirical findings in `lm-nca` (where a neural cellular automaton exhibits Hopfield-style associative-memory basins of attraction over token strings), an advanced or experimental boss variant (the **Lattice Avatar** / **Crystalline Core**) models player movement dynamics through a local 1D cellular lattice rather than a traditional context-mixing table or global attention head.
-
-- **Mechanism:** The player's recent move stream and board vector are clamped into the frozen conditioning channels of a 1D lattice. Over each turn, the hidden channels run $K$ local update steps under a shared depthwise rule, physically relaxing downhill into a learned pseudo-energy basin that reads out the predicted next action.
-- **Visualizing the Mind in Real Time:** Unlike opaque neural embeddings, NCA relaxation is spatial and local. The HUD can render the 1D lattice beside the board: the player watches ripples of activation propagate within the causal light cone ($\le 16$ cells/step) as the adversary's prediction literally "crystallizes" into an orange stain before it resolves.
-- **Dynamical Attack Surface:**
-  - **Entropy Injection:** Spending Entropy ($◇$) injects physical noise into the lattice channels, knocking the hidden state out of its deep basin into a chaotic bifurcation where no prediction can settle.
-  - **Basin Poisoning:** Deceptive patterns intentionally lure the cellular dynamics toward a shallow local minimum before shifting gait, exposing how distributed local rules handle sudden out-of-distribution shifts.
+### 3.3 Ambient CLI Terminal & Companion Daemon `A-9`
+* Toggleable interactive command prompt (`~` or click):
+  * `help`, `status`, `weights`, `epiplexity`, `theme <mode>`, `codex <id>`, `probe`.
+* Companion Daemon `A-9`: An obsolete calibration subroutine offering sarcastic real-time feedback and diagnostic commentary.
 
 ---
 
-## 7. Why each safety concept is a mechanic, not a message
+## 4. Master Roadmap & Feature Backlog
 
-| Concept | Where it lives | Player experiences it as |
-|---|---|---|
-| Being modeled / interpretability | stains, model panel, probes | reading minds to survive |
-| Distributional shift | unpredicted-vector kills | novelty as the only weapon |
-| Deceptive alignment | masks, LONG CON ending, pattern-poisoning | the most tempting strategy |
-| Specification gaming | bliss traps, gem bait, vault-LEG farming | their exploits, not the game's gotchas |
-| Instrumental convergence | ecology contesting shared resources; off-switch destruction | traffic patterns among things that don't care about you |
-| Inner misalignment | mesa-spawner drift | an ecological event |
-| Corrigibility | off-switch trades | a negotiation, not a virtue |
-| Newcomb / prediction | the Warden | a fight that ended before the door opened |
-| Transparency & trust | vaults, contracts, MUTUAL ending | legibility as a key |
-| Attractor basins / energy landscapes | Cellular Neural Core (NCA lattice) | disrupting the enemy's crystallized convergence with noise |
-| Evals & observed behavior | the eye, cache ledgers, ending gate | a number they didn't know was being written down |
+### Milestone 1: The Chainsaw Core [COMPLETED]
+- [x] Strip out 72×72 open world, biomes, and shoggoth creep.
+- [x] Strip out floating windows, news tickers, and expository fanfiction.
+- [x] Implement 5-stage Calibration Crucible in 5×5 walled chambers.
+- [x] Implement deterministic 7×7 procedural chamber generator.
+- [x] Implement pure context-mixing sequence model in `core.js`.
+- [x] Implement Pre-Echo WebAudio synthesizer.
+- [x] Implement automated test suite (`npm test`).
 
-The last row is the game's conscience and its only sermon, delivered once, at the end, in the player's own data.
+### Milestone 2: Neural Visualization & Epiplexic Diagnostics [IN PROGRESS]
+- [ ] Real-time SVG Neural Network diagram with pulsating weights.
+- [ ] Real-time Loss Curve & Epiplexity ($S_T$) sparkline graph.
+- [ ] Responsive desktop dual-column / mobile vertical reflow.
+- [ ] OLED / Green / Cyan / Light theme selector.
+- [ ] Interactive in-game CLI terminal with Companion Daemon `A-9`.
+
+### Milestone 3: Movement Protocols & Roguelike Synergies [PLANNED]
+- [ ] Movement Chips: Knight Protocol (L-shape), Bishop Protocol (diagonals).
+- [ ] Extended trajectory lasers for Order-1 Stalkers.
+- [ ] Entropy shatter effect: using Entropy on a predicted tile stuns adversary.
+- [ ] 3-Tier Trust Gate system (40% / 60% / 80%).
+- [ ] Compute Cycle (FLOP budget) anti-grind clock.
+
+### Milestone 4: Epistemic Bosses & Social Meta [PLANNED]
+- [ ] Floor 7 Miniboss: The Basilisk (wide-area causal cones).
+- [ ] Floor 10 Boss: The Avatar (multi-trajectory recursive reasoning).
+- [ ] Compact Replay Strings (`seed:X|moves:Y...`).
+- [ ] Nemesis Export/Import (challenge friends with your trained Core).

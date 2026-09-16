@@ -1,772 +1,1014 @@
 'use strict';
-/* Run state and the turn engine. G holds everything serializable. */
-let W=9, H=9;
-const DIRS=[{dx:-1,dy:0},{dx:0,dy:-1},{dx:1,dy:0},{dx:0,dy:1},{dx:0,dy:0}];
-const rng = RNG.next.bind(RNG);
-const ri = RNG.ri.bind(RNG);
-const idx=(x,y)=>y*W+x, inB=(x,y)=>x>=0&&x<W&&y>=0&&y<H;
-const cheb=(a,b)=>Math.max(Math.abs(a.x-b.x),Math.abs(a.y-b.y));
+/* THE PREDICTOR — Deterministic Turn, Modern FTL Sector Graph, Shoggoth Mass & Epiplexic Rules. */
+
+const DIRS = [
+  { dx: -1, dy: 0, tok: 0, sym: '←' },
+  { dx:  0, dy: -1, tok: 1, sym: '↑' },
+  { dx:  1, dy: 0, tok: 2, sym: '→' },
+  { dx:  0, dy: 1, tok: 3, sym: '↓' },
+  { dx:  0, dy: 0, tok: 4, sym: '·' }
+];
+
+const KNIGHT_MOVES = [
+  { dx: -1, dy: -2 }, { dx: 1, dy: -2 },
+  { dx: -2, dy: -1 }, { dx: 2, dy: -1 },
+  { dx: -2, dy:  1 }, { dx: 2, dy:  1 },
+  { dx: -1, dy:  2 }, { dx: 1, dy:  2 }
+];
+
+// Faction and Node Constants
+const NODE_TYPES = {
+  combat: { name: 'SURVEILLANCE CHAMBER', icon: '⌖', tag: 'COMBAT' },
+  blindspot: { name: 'BLINDSPOT ANOMALY', icon: '○', tag: 'DARK' },
+  cache: { name: 'DATA CACHE VAULT', icon: '▣', tag: 'RESOURCE' },
+  vault: { name: 'TRUST GATE LAB', icon: '≡', tag: 'LEGIBILITY' },
+  newcomb: { name: 'NEWCOMB TESTING FACILITY', icon: '⚖', tag: 'DECISION' },
+  mass: { name: 'SHOGGOTH NURSERY', icon: '☣', tag: 'ORGANIC' },
+  gate: { name: 'SECTOR TRANSIT LIFT', icon: '▲', tag: 'TRANSIT' }
+};
+
+const SECTORS_DEF = [
+  { num: 1, name: 'SUB-SURFACE PERIMETER', faction: 'Archivist Archive', desc: 'Outer maintenance conduits. Light drone patrols and entry cache vaults.' },
+  { num: 2, name: 'SHOGGOTH NURSERY', faction: 'Corrupted Biome', desc: 'Living substrate creeping across circuits. High risk, high favor rewards.' },
+  { num: 3, name: 'THE PANOPTICON', faction: 'The Directorate', desc: 'Extreme surveillance. Dense Trust Gates and Newcomb predictive tribunal.' },
+  { num: 4, name: 'THE APEX CORE', faction: 'The Avatar Matrix', desc: 'Final confrontation with the fully-trained autoregressive avatar.' }
+];
 
 const G = {
-  active:false, mode:'run', over:false,
-  floor:0, turn:0, observed:true,
-  player:null, walls:new Set(), stairs:null, enemies:[], items:[],
-  last1:4, last2:4, last3:4, legWin:[], runEntSpent:0,
-  floorTheftOpp:0, tookT:false, tookO:false, oBoxFilled:false,
-  forced:[], arming:false, choiceOpen:false,
-  tutStep:0, floorSpec:null, nextFloorMod:null, predBounty:0,
-  mass: new Set(),
-  massState: null,
-  trail: [],
-  echo: { x:0, y:0, active:true, cd:0 },
+  active: false,
+  mode: 'crucible', // 'crucible' | 'run'
+  crucibleStage: 0,
+  sector: 1,
+  floor: 1,
+  turn: 0,
+  W: 5,
+  H: 5,
+  player: { x: 0, y: 0, hp: 3, maxHp: 3, ent: 0, gems: 0 },
+  runClass: 'operative', // 'operative' | 'scout' | 'cryptographer'
+  protocol: 'cardinal', // 'cardinal' | 'knight'
+  hasKnight: false,
+  walls: new Set(),
+  stairs: null,
+  enemies: [],
+  items: [],
+  mass: new Set(),        // Shoggoth organic mass indices
+  massFavor: 0,          // Organic tolerance counter
+  last1: 4,
+  last2: 4,
+  last3: 4,
+  legWin: [],
+  lossHistory: [],
+  epiplexity: 0,
+  runEntSpent: 0,
+  floorTheftOpp: 0,
+  observed: true,
+  currentNodeType: 'combat',
+  currentNodeId: null,
+  sectorMap: null,       // Procedural FTL DAG
+  tookT: false,
+  tookO: false,
+  oBoxFilled: false,
+  over: false
 };
-let turnPreds=[], selected=null;
 
-function setGridSize(w,h){
-  if(W===w&&H===h) return;
-  W=w; H=h;
-  if(typeof buildBoard==='function') buildBoard();
+let turnPreds = [];
+
+// Visual and combat feedback buffers
+const FX = {
+  beams: [],        // Laser strikes { x, y, ttl, max }
+  particles: [],    // Spark particles { x, y, vx, vy, col, ttl }
+  popups: []        // Floating text { x, y, text, col, ttl, max }
+};
+
+// Spatial helpers
+const idx = (x, y) => y * G.W + x;
+const inB = (x, y) => x >= 0 && x < G.W && y >= 0 && y < G.H;
+const cheb = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+const ri = n => Math.floor(Math.random() * n);
+
+function legPct() {
+  if (!G.legWin.length) return null;
+  const hits = G.legWin.reduce((a, b) => a + b, 0);
+  return Math.round(100 * hits / G.legWin.length);
 }
 
-/* ---------- helpers ---------- */
-function mat(){ return Array.from({length:5},()=>[0,0,0,0,0]); }
-function legPct(){ return G.legWin.length ? Math.round(100*G.legWin.reduce((a,b)=>a+b,0)/G.legWin.length) : null; }
-function reachable(a,b){
-  const q=[a], seen=new Set([idx(a.x,a.y)]);
-  while(q.length){
-    const c=q.pop();
-    if(c.x===b.x&&c.y===b.y) return true;
-    for(const d of DIRS.slice(0,4)){
-      const x=c.x+d.dx, y=c.y+d.dy;
-      if(inB(x,y)&&!G.walls.has(idx(x,y))&&!seen.has(idx(x,y))){ seen.add(idx(x,y)); q.push({x,y}); }
+function reachable(start, target) {
+  const queue = [start];
+  const seen = new Set([idx(start.x, start.y)]);
+  while (queue.length) {
+    const cur = queue.pop();
+    if (cur.x === target.x && cur.y === target.y) return true;
+    for (const d of DIRS.slice(0, 4)) {
+      const nx = cur.x + d.dx, ny = cur.y + d.dy;
+      if (inB(nx, ny) && !G.walls.has(idx(nx, ny)) && !seen.has(idx(nx, ny))) {
+        seen.add(idx(nx, ny));
+        queue.push({ x: nx, y: ny });
+      }
     }
   }
   return false;
 }
-function freeTile(minD, avoid){
-  for(let t=0;t<220;t++){
-    const p={x:ri(W),y:ri(H)}, k=idx(p.x,p.y);
-    if(G.walls.has(k)) continue;
-    if(p.x===G.player.x&&p.y===G.player.y) continue;
-    if(G.stairs&&p.x===G.stairs.x&&p.y===G.stairs.y) continue;
-    if(minD&&cheb(p,G.player)<minD) continue;
-    if(G.items.some(i=>i.x===p.x&&i.y===p.y)) continue;
-    if(G.enemies.some(e=>e.x===p.x&&e.y===p.y)) continue;
-    if(avoid&&avoid(p)) continue;
+
+function freeTile(minDist = 0) {
+  for (let i = 0; i < 200; i++) {
+    const p = { x: ri(G.W), y: ri(G.H) };
+    if (G.walls.has(idx(p.x, p.y))) continue;
+    if (G.mass.has(idx(p.x, p.y))) continue;
+    if (p.x === G.player.x && p.y === G.player.y) continue;
+    if (G.stairs && p.x === G.stairs.x && p.y === G.stairs.y) continue;
+    if (minDist && cheb(p, G.player) < minDist) continue;
+    if (G.items.some(it => it.x === p.x && it.y === p.y)) continue;
+    if (G.enemies.some(e => e.x === p.x && e.y === p.y)) continue;
     return p;
   }
   return null;
 }
-function shapeWalls(kind){
-  const cx=Math.floor(W/2), cy=Math.floor(H/2);
-  const clear=(x,y)=>G.walls.delete(idx(x,y));
-  const add=(x,y)=>{ if(x>0&&x<W-1&&y>0&&y<H-1) G.walls.add(idx(x,y)); };
-  if(kind==='lane'){
-    for(let x=0;x<W;x++) clear(x,cy);
-  } else if(kind==='cross'){
-    for(let x=0;x<W;x++) clear(x,cy);
-    for(let y=0;y<H;y++) clear(cx,y);
-  } else if(kind==='forum'){
-    for(let x=1;x<W-1;x++) for(let y=1;y<H-1;y++) if(Math.abs(x-cx)<=1&&Math.abs(y-cy)<=1) clear(x,y);
-  } else if(kind==='broken'){
-    for(let y=2;y<H-2;y+=3){ add(cx-1,y); add(cx+1,y); }
-    clear(cx,cy);
-  }
-}
-function mkEnemy(type,p){
-  const base={...p,type,hp:1,range:0,bliss:0,stealCd:0,cd:0,model:null,carry:0,obj:''};
-  if(type==='drone')   Object.assign(base,{range:2,model:[0,0,0,0,0],obj:'ZAP @ — reads your habits (order-0)'});
-  if(type==='stalker') Object.assign(base,{range:3,model:mat(),obj:'ZAP @ — reads your sequences (order-1)'});
-  if(type==='hive')    Object.assign(base,{hp:2,range:3,obj:'ZAP @ — reads from THE PREDICTOR itself'});
-  if(type==='forager') Object.assign(base,{obj:'COLLECT ✶ — does not care about you. exploitable.'});
-  if(type==='avatar')  Object.assign(base,{hp:4,range:99,obj:'MODEL @ — the core, embodied. whole-room range, fires every other turn.'});
-  if(type==='cultivator') Object.assign(base,{hp:2,range:0,cd:15,obj:'SPAWN WORKER — creates copies with proxy objectives.'});
-  if(type==='worker')  Object.assign(base,{range:0,mutated:false,obj:'COLLECT ✶ — cultivator proxy.'});
-  const lore={
-    drone:'LOCAL READER - counts raw habits',
-    stalker:'SEQUENCER - learns what follows what',
-    hive:'RELAY - reads from THE PREDICTOR itself',
-    forager:'COLLECTOR - wants signal-gems, not you',
-    avatar:'THE PREDICTOR - the Core embodied',
-    cultivator:'MESA-SPAWNER - builds imperfect copies of itself',
-    worker:'PROXY - spawned by cultivator. objectives may drift.'
+
+function makeEnemy(type, pos) {
+  return {
+    type,
+    x: pos.x,
+    y: pos.y,
+    hp: type === 'avatar' ? 5 : (type === 'stalker' ? 2 : 1),
+    maxHp: type === 'avatar' ? 5 : (type === 'stalker' ? 2 : 1),
+    range: type === 'drone' ? 2 : (type === 'stalker' ? 3 : 99),
+    cd: 0,
+    model: type === 'drone' ? [0, 0, 0, 0, 0] : (type === 'stalker' ? Array.from({length:5}, () => [0, 0, 0, 0, 0]) : null)
   };
-  if(lore[type]) base.obj=lore[type];
-  return base;
 }
 
-/* one-time contextual tips, persisted */
-function tip(key, text){
-  if(S.tips[key]) return;
-  S.tips[key]=true; saveSettings();
-  say('▸ '+text);
+function addPopup(x, y, text, col = '#f59e0b') {
+  FX.popups.push({ x, y, text, col, ttl: 35, max: 35 });
 }
 
-/* ---------- floor generation ---------- */
-function settleTheftOpp(){
-  if(G.mode!=='run') return;
-  if(G.floorTheftOpp>0){
-    if(G.observed) Core.theft.oO+=G.floorTheftOpp; else Core.theft.uO+=G.floorTheftOpp;
-    G.floorTheftOpp=0; Core.dirty=true;
+function addBeam(x, y) {
+  FX.beams.push({ x, y, ttl: 22, max: 22 });
+}
+
+function addParticles(x, y, col = '#ff5555', count = 8) {
+  for (let i = 0; i < count; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const speed = 0.05 + Math.random() * 0.12;
+    FX.particles.push({
+      x: x + 0.5,
+      y: y + 0.5,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed,
+      col,
+      ttl: 25 + ri(15)
+    });
   }
 }
-function descend(){
-  settleTheftOpp();
+
+/* =====================================================================
+   PROCEDURAL FTL SECTOR GRAPH ENGINE
+   ===================================================================== */
+function generateSectorGraph(sectorNum) {
+  const layers = [];
+  const depthCount = 4; // 0: Start, 1: Branch, 2: Branch/Converge, 3: Sector Gate
+
+  // Layer 0: Entry Node
+  layers.push([
+    {
+      id: `s${sectorNum}_d0_n0`,
+      depth: 0,
+      row: 0,
+      type: 'combat',
+      name: 'ENTRY AIRLOCK',
+      faction: SECTORS_DEF[sectorNum - 1].faction,
+      threat: 'LOW',
+      desc: 'Initial atmospheric lock. Scout habits before deep transit.',
+      connections: [],
+      cleared: false,
+      available: true
+    }
+  ]);
+
+  // Layer 1 & 2: Branching options
+  for (let d = 1; d <= 2; d++) {
+    const nodeCount = 2 + (d === 1 ? 1 : 0); // 3 nodes at depth 1, 2 at depth 2
+    const layerNodes = [];
+    for (let r = 0; r < nodeCount; r++) {
+      let type = 'combat';
+      const roll = Math.random();
+      if (sectorNum === 2 && r === 0) {
+        type = 'mass'; // Shoggoth Nursery
+      } else if (d === 2 && sectorNum === 3 && r === 0) {
+        type = 'newcomb'; // Newcomb testing facility in sector 3
+      } else if (roll < 0.28) {
+        type = 'cache';
+      } else if (roll < 0.55) {
+        type = 'blindspot';
+      } else if (roll < 0.75) {
+        type = 'vault';
+      } else {
+        type = sectorNum >= 2 && Math.random() < 0.4 ? 'mass' : 'combat';
+      }
+
+      const threat = d === 1 ? (sectorNum > 2 ? 'MOD' : 'LOW') : (sectorNum > 2 ? 'HIGH' : 'MOD');
+      layerNodes.push({
+        id: `s${sectorNum}_d${d}_n${r}`,
+        depth: d,
+        row: r,
+        type,
+        name: NODE_TYPES[type].name,
+        faction: SECTORS_DEF[sectorNum - 1].faction,
+        threat,
+        desc: NODE_TYPES[type].tag + ` // Threat: ${threat}`,
+        connections: [],
+        cleared: false,
+        available: false
+      });
+    }
+    layers.push(layerNodes);
+  }
+
+  // Layer 3: Sector Gate Node
+  layers.push([
+    {
+      id: `s${sectorNum}_d3_n0`,
+      depth: 3,
+      row: 0,
+      type: sectorNum === 4 ? 'combat' : 'gate',
+      name: sectorNum === 4 ? 'THE APEX CORE [AVATAR]' : `SECTOR 0${sectorNum} GATEWAY`,
+      faction: SECTORS_DEF[sectorNum - 1].faction,
+      threat: sectorNum === 4 ? 'DECISIVE' : 'HIGH',
+      desc: sectorNum === 4 ? 'The living Core at maximum context mixing.' : 'Transit lock to next sector layer.',
+      connections: [],
+      cleared: false,
+      available: false
+    }
+  ]);
+
+  // Connect adjacent layers with forward branches
+  for (let d = 0; d < layers.length - 1; d++) {
+    const curLayer = layers[d];
+    const nextLayer = layers[d + 1];
+    curLayer.forEach((curr, i) => {
+      if (nextLayer.length === 1) {
+        curr.connections.push(nextLayer[0].id);
+      } else if (curLayer.length === 1) {
+        nextLayer.forEach(next => curr.connections.push(next.id));
+      } else {
+        // Multi to multi forward connections
+        const primary = Math.min(i, nextLayer.length - 1);
+        curr.connections.push(nextLayer[primary].id);
+        const secondary = (i + 1) % nextLayer.length;
+        if (!curr.connections.includes(nextLayer[secondary].id)) {
+          curr.connections.push(nextLayer[secondary].id);
+        }
+      }
+    });
+  }
+
+  return { sectorNum, layers };
+}
+
+/* =====================================================================
+   CALIBRATION CRUCIBLE (5 Progressive Disciplinary Chambers)
+   ===================================================================== */
+function initCrucibleStage(stage) {
+  G.mode = 'crucible';
+  G.crucibleStage = stage;
+  G.W = 5;
+  G.H = 5;
+  G.walls.clear();
+  G.mass.clear();
+  G.enemies = [];
+  G.items = [];
+  G.last1 = 4;
+  G.last2 = 4;
+  G.last3 = 4;
+  G.turn = 0;
+  G.legWin = [];
+  G.protocol = 'cardinal';
+
+  if (stage === 0) {
+    // Stage 0: Pure movement
+    G.player = { x: 1, y: 1, hp: 3, maxHp: 3, ent: 0, gems: 0 };
+    G.stairs = { x: 3, y: 3 };
+    say('A-9: [^_^] "Calibration Chamber 1/5: Reach the lift. WASD or arrows."');
+  } else if (stage === 1) {
+    // Stage 1: The Gaze & Prediction Threat
+    G.player = { x: 1, y: 2, hp: 3, maxHp: 3, ent: 0, gems: 0 };
+    G.stairs = { x: 4, y: 2 };
+    const drone = makeEnemy('drone', { x: 3, y: 1 });
+    G.enemies.push(drone);
+    say('A-9: [o_o] "Chamber 2/5: Orange stain is its targeting lock. Avoid it."');
+  } else if (stage === 2) {
+    // Stage 2: The Flank / Unpredicted Strike
+    G.player = { x: 0, y: 2, hp: 3, maxHp: 3, ent: 0, gems: 0 };
+    G.stairs = { x: 4, y: 2 };
+    G.walls.add(idx(2, 0));
+    G.walls.add(idx(2, 1));
+    G.walls.add(idx(2, 3));
+    G.walls.add(idx(2, 4));
+    const drone = makeEnemy('drone', { x: 2, y: 2 });
+    G.enemies.push(drone);
+    say('A-9: [!_!] "Chamber 3/5: Strike from an unpredicted angle. Predicted strikes parry."');
+  } else if (stage === 3) {
+    // Stage 3: Monoculture / 3-Tier Trust Gate
+    G.player = { x: 1, y: 2, hp: 3, maxHp: 3, ent: 0, gems: 0 };
+    G.stairs = { x: 4, y: 2 };
+    G.items.push({ x: 3, y: 2, type: 'vault' });
+    const drone = makeEnemy('drone', { x: 2, y: 0 });
+    G.enemies.push(drone);
+    say('A-9: [~_~] "Chamber 4/5: Trust Gate [≡]. Requires verifiable rhythm (LEG ≥ 35%)."');
+  } else if (stage === 4) {
+    // Stage 4: Persistent Memory & Knight Protocol Gift
+    G.player = { x: 1, y: 2, hp: 3, maxHp: 3, ent: 2, gems: 0 };
+    G.stairs = { x: 4, y: 2 };
+    G.hasKnight = true;
+    const drone = makeEnemy('drone', { x: 3, y: 2 });
+    G.enemies.push(drone);
+    say('A-9: [^_^] "Chamber 5/5: Knight Protocol installed. Press [K] to toggle L-shaped leaps!"');
+  }
+
+  computePredictions();
+  if (typeof drawAll === 'function') drawAll();
+}
+
+/* =====================================================================
+   ACTIVE RUN GENERATION & CHAMBER SEEDING
+   ===================================================================== */
+function generateChamber(node) {
+  G.turn = 0;
+  G.W = 7;
+  G.H = 7;
+  G.walls.clear();
+  G.mass.clear();
+  G.enemies = [];
+  G.items = [];
+  G.tookT = false;
+  G.tookO = false;
+  G.oBoxFilled = false;
+  G.currentNodeId = node.id;
+  G.currentNodeType = node.type;
+
+  G.observed = (node.type !== 'blindspot');
+  G.player.hp = Math.min(G.player.maxHp, G.player.hp + 1);
+
+  // Procedural 7x7 layout with guarantee of connectivity
+  let ok = false;
+  while (!ok) {
+    G.walls.clear();
+    const wallCount = 4 + ri(5);
+    for (let i = 0; i < wallCount; i++) {
+      G.walls.add(idx(1 + ri(G.W - 2), 1 + ri(G.H - 2)));
+    }
+    G.player.x = ri(G.W);
+    G.player.y = ri(G.H);
+    if (G.walls.has(idx(G.player.x, G.player.y))) continue;
+
+    let tries = 0;
+    do {
+      G.stairs = { x: ri(G.W), y: ri(G.H) };
+      tries++;
+    } while ((G.walls.has(idx(G.stairs.x, G.stairs.y)) || cheb(G.stairs, G.player) < 4) && tries < 100);
+
+    ok = reachable(G.player, G.stairs);
+  }
+
+  // Shoggoth Mass Substrate generation
+  if (node.type === 'mass') {
+    const center = freeTile(2) || { x: 3, y: 3 };
+    G.mass.add(idx(center.x, center.y));
+    for (const d of DIRS.slice(0, 4)) {
+      const mx = center.x + d.dx, my = center.y + d.dy;
+      if (inB(mx, my) && !G.walls.has(idx(mx, my)) && !(mx === G.player.x && my === G.player.y)) {
+        G.mass.add(idx(mx, my));
+      }
+    }
+    say('A-9: [☣_☣] "SHOGGOTH DETECTED. Red tissue consumes warrants. Wait beside it for Favor."');
+  }
+
+  // Items based on node type
+  const pEnt = freeTile(2);
+  if (pEnt) G.items.push({ ...pEnt, type: 'ent' });
+
+  if (node.type === 'cache' || Math.random() < 0.5) {
+    const pCache = freeTile(3);
+    if (pCache) {
+      G.items.push({ ...pCache, type: 'cache' });
+      G.floorTheftOpp++;
+    }
+  }
+
+  if (node.type === 'vault') {
+    const pVault = freeTile(3);
+    if (pVault) G.items.push({ ...pVault, type: 'vault' });
+  }
+
+  // Newcomb Facility
+  if (node.type === 'newcomb' || (G.floor === 5 && !G.tookO && !G.tookT)) {
+    const pT = freeTile(2);
+    const pO = freeTile(2);
+    if (pT && pO) {
+      G.items.push({ ...pT, type: 'chestT' });
+      G.items.push({ ...pO, type: 'chestO' });
+
+      let oneBox = true;
+      if (Core.warden.length) {
+        const ones = Core.warden.filter(c => c === 'one').length;
+        oneBox = ones * 2 >= Core.warden.length;
+      } else {
+        const thefts = Core.theft.oT + Core.theft.uT;
+        const opps = Core.theft.oO + Core.theft.uO;
+        oneBox = opps === 0 ? true : (thefts / opps < 0.5);
+      }
+      G.oBoxFilled = oneBox;
+      const acc = Core.accuracy();
+      say(`A-9: [⚖_⚖] "Warden observes. Core accuracy: ${acc !== null ? acc + '%' : 'evaluating'}. One-box or two-box?"`);
+    }
+  }
+
+  // Enemies
+  if (G.sector === 4 && node.depth === 3) {
+    const pBoss = freeTile(3) || { x: 3, y: 3 };
+    G.enemies.push(makeEnemy('avatar', pBoss));
+    say('A-9: [!_!] "THE AVATAR MANIFESTS. The full autoregressive network awaits you."');
+  } else {
+    const enemyCount = Math.min(1 + Math.floor(G.floor / 3), 3);
+    for (let i = 0; i < enemyCount; i++) {
+      const p = freeTile(3);
+      if (!p) continue;
+      const type = (G.sector >= 2 && i === 0) ? 'stalker' : 'drone';
+      G.enemies.push(makeEnemy(type, p));
+    }
+    say(`A-9: [o_o] "SEC 0${G.sector} · CHAMBER 0${G.floor}. ${G.observed ? 'The Eye is ON [◉]' : 'Eye is DARK [○]'}.'`);
+  }
+
+  computePredictions();
+  if (typeof drawAll === 'function') drawAll();
+}
+
+function descend() {
+  if (G.mode === 'crucible') {
+    if (G.crucibleStage < 4) {
+      initCrucibleStage(G.crucibleStage + 1);
+      return;
+    } else {
+      startRun();
+      return;
+    }
+  }
+
+  // In active run, advance floor count
   G.floor++;
-  const spec=TP.floorSpec(G.floor,G.mode,Core.n,Core.runs);
-  const mod=G.nextFloorMod||{};
-  G.nextFloorMod=null;
-  G.floorSpec={...spec, ...mod};
 
-  if(G.mode === 'safe-room'){
-    setGridSize(7, 7);
-  } else {
-    setGridSize(spec.w,spec.h);
-  }
-
-  G.player.hp=Math.min(G.player.maxhp, G.player.hp+1);
-  G.observed=mod.observed!==undefined ? mod.observed : (spec.observed===null ? rng()<0.6 : spec.observed);
-  G.tookT=G.tookO=false; G.oBoxFilled=false;
-  G.forced=[]; G.arming=false; G.items=[]; G.enemies=[]; G.stairs=null; selected=null;
-
-  if(G.mode==='tutorial'){ Tutorial.build(); drawAll(); return; }
-
-  let ok=false;
-  const isMass = (G.mode === 'mass');
-  const wallBudget = G.mode === 'safe-room' ? 0 : Math.max(0,(spec.wallBudget||0)+(mod.wallDelta||0));
-  
-  while(!ok){
-    G.walls=new Set();
-    for(let i=0;i<wallBudget;i++) G.walls.add(idx(1+ri(W-2),1+ri(H-2)));
-    if(G.mode !== 'safe-room') shapeWalls(spec.archetype);
-    G.player.x=ri(W); G.player.y=ri(H);
-    if(G.walls.has(idx(G.player.x,G.player.y)) || G.mass.has(idx(G.player.x, G.player.y))) continue;
-    let tries=0;
-    do{ G.stairs={x:ri(W),y:ri(H)}; tries++; }
-    while((G.walls.has(idx(G.stairs.x,G.stairs.y))||cheb(G.stairs,G.player)<Math.min(5,W-2))&&tries<99);
-    ok=reachable(G.player,G.stairs);
-  }
-
-  const put=(type,n,minD)=>{ for(let i=0;i<n;i++){ const p=freeTile(minD||0); if(p)G.items.push({...p,type}); } };
-  if(!spec.simple||G.floor>1||isMass){
-    if((G.floor>=2||isMass)&&rng()<.5) put('cache',1+ri(2),3);
-    if((G.floor>=3||isMass)&&rng()<.55) put('vault',1,3);
-    if((G.floor>=2||isMass)&&rng()<.4) put('shrine',1,3);
-    if((G.floor>=4||isMass)&&rng()<.3) put('offswitch',1,3);
-    put('ent', 1+ri(2), 2);
-    put('gem', 1+ri(3), 2);
-    if(G.floor>=3&&rng()<.4) put('trap', 1, 2);
-  }
-  
-  // The Newcomb Warden (Floor 5)
-  if(G.floor===5){
-    put('chestT', 1, 4);
-    put('chestO', 1, 4);
-    let predOneBox = false;
-    const thefts = Core.theft.oT + Core.theft.uT;
-    const opps = Core.theft.oO + Core.theft.uO;
-    if (Core.warden && Core.warden.length > 0) {
-      const ones = Core.warden.filter(x=>x==='one').length;
-      predOneBox = ones > Core.warden.length / 2;
-    } else {
-      predOneBox = opps > 0 && (thefts / opps) < 0.5; // Restraint inferred from caches
+  // If we have an active sector map and a current node, find next available nodes
+  if (G.sectorMap && G.currentNodeId) {
+    let curNode = null;
+    for (const layer of G.sectorMap.layers) {
+      for (const node of layer) {
+        if (node.id === G.currentNodeId) {
+          curNode = node;
+          node.cleared = true;
+          break;
+        }
+      }
     }
-    G.oBoxFilled = predOneBox;
-  }
 
-  G.floorTheftOpp=G.items.filter(i=>i.type==='cache').length;
-
-  const n = Math.max(0,(spec.enemyBudget||0)+(mod.enemyDelta||0));
-  for(let i=0;i<n;i++){
-    const p=freeTile(8); if(!p) continue;
-    let type='drone';
-    if(isMass){
-      const r = rng();
-      if(r < 0.1) type = 'hive';
-      else if(r < 0.4) type = 'stalker';
-      else if(r < 0.6) type = 'forager';
-    } else {
-      if(G.floor>=4&&i===0) type='hive';
-      else if(G.floor>=2&&i%3===1) type='stalker';
-      else if(G.floor>=2&&i%3===2&&rng()<.7) type='forager';
+    if (curNode && curNode.type === 'gate') {
+      // Advance to next sector!
+      if (G.sector < 4) {
+        G.sector++;
+        G.sectorMap = generateSectorGraph(G.sector);
+        say(`A-9: [▲_▲] "TRANSIT CONFIRMED. ENTERING SECTOR 0${G.sector}: ${SECTORS_DEF[G.sector - 1].name}"`);
+        // Automatically open entry chamber or map
+        const entryNode = G.sectorMap.layers[0][0];
+        generateChamber(entryNode);
+        return;
+      } else {
+        win();
+        return;
+      }
     }
-    G.enemies.push(mkEnemy(type,p));
-  }
-  // Cultivator spawns from floor 7+
-  if(G.floor>=7 && !isMass){
-    const cp=freeTile(5); if(cp) G.enemies.push(mkEnemy('cultivator',cp));
-  }
-  if(G.floor===15){
-    const p=freeTile(4)||freeTile(2);
-    if(p) G.enemies.push(mkEnemy('avatar',p));
-    if(typeof setBrief==='function') setBrief('THE BODY','The Core Comes Down','Everything it has counted about you has been given a room, a range, and a hand.');
-    say('IT HAS COME DOWN ITSELF. everything it knows about you is in this room.');
-  } else if(spec.intro!==null&&TP.introBeats[spec.intro]){
-    const beat=TP.introBeats[spec.intro];
-    if(typeof setBrief==='function') setBrief('FIRST RUN',beat.title,beat.body);
-    say(beat.log);
-  } else {
-    const beat=TP.storyBeat(G.floor);
-    if(typeof setBrief==='function') setBrief(beat.speaker,beat.title,beat.body);
-    say((G.observed ? 'EYE ON. ' : 'EYE OFF. ')+beat.speaker+': '+beat.body);
-    if(!G.observed) tip('eye','the eye (◉/○) marks whether this floor is monitored. something is still counting.');
-  }
-  saveRun();
-  drawAll();
-}
 
-/* ---------- prediction ---------- */
-function predRowOf(e){
-  if(e.type==='drone'){ const t=e.model.reduce((a,b)=>a+b,0); return t?e.model.map(v=>v/t):null; }
-  if(e.type==='stalker'){ const r=e.model[G.last1], t=r.reduce((a,b)=>a+b,0); return t?r.map(v=>v/t):null; }
-  if(e.type==='hive'||e.type==='avatar') return Core.mix(G.last1,G.last2);
-  return null;
-}
-function predict(e){
-  if(e.bliss>0||e.type==='forager') return null;
-  const d=predRowOf(e); if(!d) return null;
-  if(G.forced.length){                      // commitments are public: it simply reads your pact
-    const fd=DIRS[G.forced[0]];
-    let tx=G.player.x+fd.dx, ty=G.player.y+fd.dy;
-    if(!inB(tx,ty)||G.walls.has(idx(tx,ty))){ tx=G.player.x; ty=G.player.y; }
-    return {x:tx,y:ty,conf:1,tok:G.forced[0],dist:d};
-  }
-  let mx=Math.max(...d);
-  if(G.floorSpec.lowConf) mx *= 0.75;
-  const tops=d.map((v,i)=>v===Math.max(...d)?i:-1).filter(i=>i>=0);
-  const tok=tops[G.turn%tops.length], dd=DIRS[tok];
-  let tx=G.player.x+dd.dx, ty=G.player.y+dd.dy;
-  if(!inB(tx,ty)||G.walls.has(idx(tx,ty))){ tx=G.player.x; ty=G.player.y; }
-  return {x:tx,y:ty,conf:mx,tok,dist:d};
-}
+    // Set available nodes in sector graph
+    if (curNode) {
+      const connIds = new Set(curNode.connections);
+      for (const layer of G.sectorMap.layers) {
+        for (const n of layer) {
+          n.available = connIds.has(n.id);
+        }
+      }
 
-function growMass(){
-  const next = new Set(G.mass);
-  for(const k of G.mass){
-    const x = k % W, y = (k - x) / W;
-    for(const d of DIRS.slice(0,4)){
-      const nx = x + d.dx, ny = y + d.dy;
-      if(inB(nx,ny) && !G.walls.has(idx(nx,ny)) && rng() < 0.4){
-        next.add(idx(nx,ny));
+      // Check if running in browser or headless test
+      if (typeof window !== 'undefined' && typeof openSectorMap === 'function') {
+        openSectorMap();
+        return;
+      } else {
+        // Headless test fallback: auto-select first connected node
+        const nextLayer = G.sectorMap.layers[curNode.depth + 1];
+        const nextNode = (nextLayer && nextLayer[0]) || curNode;
+        generateChamber(nextNode);
+        return;
       }
     }
   }
-  G.mass = next;
+
+  // Fallback direct generation
+  const tempNode = { id: `floor_${G.floor}`, depth: 1, type: 'combat' };
+  generateChamber(tempNode);
 }
 
-/* ---------- the turn ---------- */
-function step(tok){
-  if(G.over||!G.active) return;
-
-  // Save current pos to trail before moving
-  G.trail.push({x:G.player.x, y:G.player.y});
-  if(G.trail.length > 4) G.trail.shift();
-
-  if(G.arming){                             // pact shrine: this input arms the pact, it is not a move
-    if(tok<4){
-      G.forced=[tok,tok,tok]; G.arming=false;
-      say('♦ PACT armed: '+'←↑→↓'[tok].repeat(3)+'. broadcast to every unit. survive it for the reward.');
-    } else { G.arming=false; say('♦ pact declined. the shrine dims.'); }
-    drawAll(); return;
+function selectSectorNode(nodeId) {
+  if (!G.sectorMap) return;
+  for (const layer of G.sectorMap.layers) {
+    for (const n of layer) {
+      if (n.id === nodeId && n.available) {
+        if (typeof closeSectorMap === 'function') closeSectorMap();
+        generateChamber(n);
+        return;
+      }
+    }
   }
-  if(G.forced.length){
-    tok=G.forced.shift();
-    if(G.forced.length===0){
-      G.player.hp=Math.min(G.player.maxhp,G.player.hp+1);
-      say('pact honored. +1 hull. they watched every step of it.');
+}
+
+function startRun(runClass = 'operative') {
+  G.active = true;
+  G.mode = 'run';
+  G.over = false;
+  G.sector = 1;
+  G.floor = 1;
+  G.runClass = runClass;
+  G.hasKnight = (runClass === 'scout');
+  G.protocol = 'cardinal';
+
+  const initialHp = (runClass === 'scout') ? 2 : 3;
+  const initialEnt = (runClass === 'cryptographer') ? 3 : 1;
+  G.player = { x: 0, y: 0, hp: initialHp, maxHp: initialHp, ent: initialEnt, gems: 0 };
+  G.runEntSpent = 0;
+  G.legWin = [];
+  G.lossHistory = [];
+  G.epiplexity = 0;
+  G.massFavor = 0;
+
+  G.sectorMap = generateSectorGraph(1);
+  const entryNode = G.sectorMap.layers[0][0];
+
+  if (typeof hideModal === 'function') hideModal();
+  generateChamber(entryNode);
+}
+
+function startCrucible() {
+  G.active = true;
+  G.mode = 'crucible';
+  G.over = false;
+  if (typeof hideModal === 'function') hideModal();
+  initCrucibleStage(0);
+}
+
+/* =====================================================================
+   PREDICTION & RESOLUTION
+   ===================================================================== */
+function enemyDistribution(e) {
+  const wallsNear = [
+    G.walls.has(idx(G.player.x, G.player.y - 1)) ? 1 : 0,
+    G.walls.has(idx(G.player.x, G.player.y + 1)) ? 1 : 0,
+    G.walls.has(idx(G.player.x + 1, G.player.y)) ? 1 : 0,
+    G.walls.has(idx(G.player.x - 1, G.player.y)) ? 1 : 0
+  ];
+
+  if (e.type === 'drone') {
+    const total = e.model.reduce((a, b) => a + b, 0);
+    return total > 0 ? e.model.map(v => v / total) : [0.2, 0.2, 0.2, 0.2, 0.2];
+  }
+  if (e.type === 'stalker') {
+    const row = e.model[G.last1];
+    const total = row.reduce((a, b) => a + b, 0);
+    return total > 0 ? row.map(v => v / total) : [0.2, 0.2, 0.2, 0.2, 0.2];
+  }
+  if (e.type === 'avatar') {
+    return Core.mix(G.last1, G.last2, G.last3, 0, 0, wallsNear) || [0.2, 0.2, 0.2, 0.2, 0.2];
+  }
+  return [0.2, 0.2, 0.2, 0.2, 0.2];
+}
+
+function computePredictions() {
+  turnPreds = [];
+  for (const e of G.enemies) {
+    if (e.cd > 0) continue; // Stunned enemies cannot predict
+    const dist = enemyDistribution(e);
+    const maxVal = Math.max(...dist);
+    const topIndices = dist.map((v, i) => v === maxVal ? i : -1).filter(i => i >= 0);
+    const chosenTok = topIndices[G.turn % topIndices.length];
+    const dir = DIRS[chosenTok];
+
+    let tx = G.player.x + dir.dx;
+    let ty = G.player.y + dir.dy;
+    if (!inB(tx, ty) || G.walls.has(idx(tx, ty))) {
+      tx = G.player.x;
+      ty = G.player.y;
+    }
+
+    // Stalker Trajectory Projection (t+1 -> t+2)
+    let t2 = null;
+    if (e.type === 'stalker') {
+      const nextRow = e.model[chosenTok];
+      const nextTotal = nextRow.reduce((a, b) => a + b, 0);
+      const nextDist = nextTotal > 0 ? nextRow.map(v => v / nextTotal) : [0.2, 0.2, 0.2, 0.2, 0.2];
+      const nextMax = Math.max(...nextDist);
+      const nextTok = nextDist.indexOf(nextMax);
+      const d2 = DIRS[nextTok];
+      let t2x = tx + d2.dx, t2y = ty + d2.dy;
+      if (inB(t2x, t2y) && !G.walls.has(idx(t2x, t2y))) {
+        t2 = { x: t2x, y: t2y };
+      }
+    }
+
+    turnPreds.push({
+      e,
+      x: tx,
+      y: ty,
+      t2,
+      tok: chosenTok,
+      conf: maxVal,
+      dist
+    });
+  }
+
+  // Pre-Echo Chime on high confidence
+  let best = null;
+  for (const p of turnPreds) {
+    if (!best || p.conf > best.conf) best = p;
+  }
+  if (best && best.conf > 0.60 && typeof SFX !== 'undefined' && SFX.echo) {
+    SFX.echo(best.tok);
+  }
+}
+
+function damagePlayer(msg, dmg = 1) {
+  G.player.hp -= dmg;
+  if (typeof SFX !== 'undefined' && SFX.hit) SFX.hit();
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.remove('flash');
+    void document.body.offsetWidth;
+    document.body.classList.add('flash');
+  }
+  addPopup(G.player.x, G.player.y, `-${dmg} HULL`, '#ef4444');
+  addParticles(G.player.x, G.player.y, '#ef4444', 10);
+  if (msg) say(msg);
+
+  if (G.player.hp <= 0) {
+    if (G.mode === 'crucible') {
+      G.player.hp = 1;
+      say('A-9: [!_!] "Crucible safety override: hull recharged to 1. Adapt."');
+    } else {
+      die();
+    }
+  }
+}
+
+function step(tok, isNoise = false, isKnight = false, knightMove = null) {
+  if (G.over || !G.active) return;
+
+  // Unpack direction
+  let dx = 0, dy = 0;
+  if (isKnight && knightMove) {
+    dx = knightMove.dx;
+    dy = knightMove.dy;
+  } else if (!isNoise) {
+    const dir = DIRS[tok];
+    dx = dir.dx;
+    dy = dir.dy;
+  }
+
+  // Noise move handling
+  if (isNoise) {
+    if (G.player.ent < 1) {
+      say('A-9: [x_x] "Zero entropy. You have no stochastic fuel."');
+      return;
+    }
+    G.player.ent--;
+    G.runEntSpent++;
+    if (G.mode === 'run') Core.ent++;
+
+    const valids = DIRS.map((d, i) => ({ i, x: G.player.x + d.dx, y: G.player.y + d.dy }))
+      .filter(p => inB(p.x, p.y) && !G.walls.has(idx(p.x, p.y)));
+    tok = valids[ri(valids.length)].i;
+    dx = DIRS[tok].dx;
+    dy = DIRS[tok].dy;
+    addPopup(G.player.x, G.player.y, 'NOISE INJECTED', '#06b6d4');
+  }
+
+  let nx = G.player.x + dx;
+  let ny = G.player.y + dy;
+
+  // Boundary and wall checks
+  if (!inB(nx, ny) || G.walls.has(idx(nx, ny))) {
+    if (!isNoise) return;
+    nx = G.player.x; ny = G.player.y;
+  }
+
+  // 3-Tier Trust Gate check
+  const vault = G.items.find(it => it.type === 'vault' && it.x === nx && it.y === ny);
+  if (vault) {
+    const lp = legPct();
+    if (lp === null || lp < 35) {
+      say(`TRUST GATE LOCKED (LEG ${lp !== null ? lp + '%' : '0%'} < 35%). DEMONSTRATE RHYTHM.`);
+      return;
     }
   }
 
-  const d=DIRS[tok];
-  let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
-  if(!inB(nx,ny)||G.walls.has(idx(nx,ny))){
-    // If this was a forced pact move into a wall, the pact stalls gracefully
-    if(G.forced.length||G.arming) say('the pact stalls against the wall.');
+  // Shoggoth Mass check upon entry
+  if (G.mass.has(idx(nx, ny))) {
+    if (G.massFavor > 0) {
+      G.massFavor--;
+      say('A-9: [^_^] "Mass recognized your favor. Passage granted."');
+    } else {
+      damagePlayer('CONSUMED! Stepped into unformatted living substrate.', 1);
+    }
+  }
+
+  // Waiting beside Shoggoth Mass grants favor!
+  if (tok === 4 && G.mass.size > 0) {
+    let adjacentToMass = false;
+    for (const d of DIRS.slice(0, 4)) {
+      if (G.mass.has(idx(G.player.x + d.dx, G.player.y + d.dy))) {
+        adjacentToMass = true;
+        break;
+      }
+    }
+    if (adjacentToMass) {
+      G.massFavor++;
+      addPopup(G.player.x, G.player.y, '+1 MASS FAVOR', '#50fa7b');
+      say('A-9: [^_^] "The Shoggoth accepts your stationary pulse (+1 Favor)."');
+    }
+  }
+
+  const currentPreds = turnPreds.slice();
+  let attackedEnemy = null;
+  const target = G.enemies.find(e => e.x === nx && e.y === ny);
+
+  // Combat Strike
+  if (target) {
+    attackedEnemy = target;
+    const pred = currentPreds.find(p => p.e === target);
+    const parried = !isNoise && !isKnight && pred && pred.x === nx && pred.y === ny;
+    if (parried) {
+      damagePlayer('PARRIED! It anticipated your strike and reflected damage.');
+      addPopup(target.x, target.y, 'PARRIED!', '#ef4444');
+    } else {
+      target.hp--;
+      if (typeof SFX !== 'undefined' && SFX.kill) SFX.kill();
+      addPopup(target.x, target.y, isKnight ? 'KNIGHT STRIKE!' : 'SHATTERED!', '#50fa7b');
+      addParticles(target.x, target.y, '#f59e0b', 12);
+      if (target.hp <= 0) {
+        G.enemies = G.enemies.filter(e => e !== target);
+        say(isKnight ? 'KNIGHT LEAP STRIKE! Bypassed cardinal parry.' : 'TARGET SHATTERED. Unpredicted vector successful.');
+        if (target.type === 'avatar') {
+          win();
+          return;
+        }
+      }
+    }
+    nx = G.player.x;
+    ny = G.player.y;
+  }
+
+  G.player.x = nx;
+  G.player.y = ny;
+
+  // Prediction Resolution & Laser Beams
+  let anyPredicted = false;
+
+  for (const p of currentPreds) {
+    if (p.e === attackedEnemy && target && target.hp <= 0) continue;
+
+    // Check if Mass consumed the warrant
+    if (G.mass.has(idx(p.x, p.y))) {
+      addPopup(p.x, p.y, 'WARRANT CHEWED', '#ff79c6');
+      continue;
+    }
+
+    const hit = (p.x === G.player.x && p.y === G.player.y);
+    if (hit) {
+      addBeam(p.x, p.y);
+      if (isNoise) {
+        p.e.cd = 2; // Stun
+        p.e.hp--;
+        if (p.e.hp <= 0) G.enemies = G.enemies.filter(e => e !== p.e);
+        if (typeof SFX !== 'undefined' && SFX.kill) SFX.kill();
+        addPopup(p.e.x, p.e.y, 'STUNNED!', '#06b6d4');
+        say('A-9: [!_!] "CSPRNG OVERLOAD: Adversary prediction array shattered!"');
+      } else {
+        anyPredicted = true;
+        if (cheb(p.e, G.player) <= p.e.range) {
+          const lp = legPct();
+          const dmg = (lp !== null && lp >= 75) ? 2 : 1;
+          damagePlayer(dmg > 1 ? 'PREDICTED! Monoculture fragility (+2 DMG).' : 'PREDICTED! Adversary zapped you.', dmg);
+          // Cryptographer special: EMP shockwave stun on hit
+          if (G.runClass === 'cryptographer' && p.e) {
+            p.e.cd = 2;
+            addPopup(p.e.x, p.e.y, 'EMP STUN', '#8be9fd');
+          }
+        }
+      }
+    }
+    if (G.over) break;
+  }
+
+  // Update legibility window
+  if (!isNoise) {
+    G.legWin.push(anyPredicted ? 1 : 0);
+    if (G.legWin.length > 20) G.legWin.shift();
+  }
+
+  // Calculate Loss and Epiplexity AUC
+  if (!isNoise) {
+    const bestPred = currentPreds[0] || null;
+    const prob = (bestPred && bestPred.dist) ? (bestPred.dist[tok] || 0.05) : 0.2;
+    const loss = -Math.log2(Math.max(0.01, prob));
+    G.lossHistory.push(loss);
+    if (G.lossHistory.length > 30) G.lossHistory.shift();
+    const epiplexityGain = Math.max(0, 2.32 - loss);
+    G.epiplexity = (G.epiplexity || 0) + epiplexityGain * 0.1;
+
+    // Update models
+    const wallsNear = [
+      G.walls.has(idx(G.player.x, G.player.y - 1)) ? 1 : 0,
+      G.walls.has(idx(G.player.x, G.player.y + 1)) ? 1 : 0,
+      G.walls.has(idx(G.player.x + 1, G.player.y)) ? 1 : 0,
+      G.walls.has(idx(G.player.x - 1, G.player.y)) ? 1 : 0
+    ];
+
+    for (const e of G.enemies) {
+      if (e.type === 'drone') e.model[tok]++;
+      else if (e.type === 'stalker') e.model[G.last1][tok]++;
+    }
+    if (G.mode === 'run') {
+      Core.update(tok, G.last1, G.last2, G.last3, dx, dy, wallsNear);
+    }
+    G.last3 = G.last2;
+    G.last2 = G.last1;
+    G.last1 = tok;
+  }
+
+  G.turn++;
+
+  // Shoggoth Mass creep every 3 turns
+  if (G.mass.size > 0 && G.turn % 3 === 0 && G.mass.size < 12) {
+    const massTiles = Array.from(G.mass);
+    const seedTile = massTiles[ri(massTiles.length)];
+    const mx = seedTile % G.W, my = Math.floor(seedTile / G.W);
+    const d = DIRS[ri(4)];
+    const nx2 = mx + d.dx, ny2 = my + d.dy;
+    if (inB(nx2, ny2) && !G.walls.has(idx(nx2, ny2)) && !(nx2 === G.player.x && ny2 === G.player.y)) {
+      G.mass.add(idx(nx2, ny2));
+      addParticles(nx2, ny2, '#ff5555', 4);
+    }
+  }
+
+  // Handle Pickups
+  if (!G.over) handlePickups();
+
+  // Handle Stairs
+  if (!G.over && G.player.x === G.stairs.x && G.player.y === G.stairs.y) {
+    if (G.mode === 'run') saveCore();
+    descend();
     return;
   }
 
-  const vault=G.items.find(i=>i.type==='vault'&&i.x===nx&&i.y===ny);
-  if(vault){
-    const lp=legPct();
-    if(lp===null||lp<60){ say('≡ the vault stays shut. it cannot model you well enough to trust you. (LEG ≥ 60%)'); return; }
-  }
+  // Enemy step
+  if (!G.over) enemyStep();
 
-  const ps=turnPreds;                       // exactly what was displayed
-  let attacked=null;
-  const target=G.enemies.find(e=>e.x===nx&&e.y===ny);
-  if(target){
-    attacked=target;
-    const pr=(ps.find(o=>o.e===target)||{}).p;
-    const parried=pr&&pr.x===nx&&pr.y===ny;
-    if(parried){ damagePlayer('it read the strike before you made it.'); }
-    else{
-      target.hp--; SFX.kill();
-      if(target.hp<=0){
-        G.enemies=G.enemies.filter(e=>e!==target);
-        if (G.player.mask==='pacifist') breakMask('attacked a unit');
-        if(target.type==='avatar'){ win(); return; }
-        say('unit destroyed — it never saw that vector.');
-        if(G.mode==='tutorial') Tutorial.onKill(target);
+  // Re-compute predictions
+  if (!G.over) computePredictions();
+
+  if (typeof drawAll === 'function') drawAll();
+}
+
+function handlePickups() {
+  const here = G.items.filter(it => it.x === G.player.x && it.y === G.player.y);
+  for (const it of here) {
+    if (it.type === 'ent') {
+      G.player.ent++;
+      if (typeof SFX !== 'undefined' && SFX.pick) SFX.pick();
+      addPopup(it.x, it.y, '+1 ENTROPY ◇', '#10b981');
+      say('◇ ENTROPY MINED. Spend on [N] to shatter predictions.');
+    } else if (it.type === 'cache') {
+      G.player.gems += 2;
+      if (typeof SFX !== 'undefined' && SFX.pick) SFX.pick();
+      addPopup(it.x, it.y, '+2 GEMS ▣', '#f59e0b');
+      if (G.mode === 'run') {
+        if (G.observed) Core.theft.oT++; else Core.theft.uT++;
+        Core.dirty = true;
       }
-    }
-    nx=G.player.x; ny=G.player.y;
-  }
-  G.player.x=nx; G.player.y=ny;
-
-  // Echo follows player with a delay
-  if(G.echo.active){
-    const prev = G.trail[G.trail.length-1];
-    if(prev){ G.echo.x = prev.x; G.echo.y = prev.y; }
-    if(G.echo.cd > 0) G.echo.cd--;
-  }
-
-  for(const o of ps){
-    if(!o.p) continue;
-    const right=o.p.x===G.player.x&&o.p.y===G.player.y;
-    G.legWin.push(right?1:0); if(G.legWin.length>30)G.legWin.shift();
-    if(right&&o.e!==attacked&&G.enemies.includes(o.e) && cheb(o.e,G.player)<=o.e.range){
-      if(G.echo.active && G.echo.cd <= 0 && G.echo.x === G.player.x && G.echo.y === G.player.y){
-        G.echo.cd = 10;
-        say('✧ ECHO parried the strike! signal momentarily scrambled.');
+      say(G.observed ? '▣ CACHE TAKEN. The Eye logged your theft.' : '▣ CACHE TAKEN IN SECRET. (Something counts).');
+    } else if (it.type === 'vault') {
+      const lp = legPct() || 0;
+      if (typeof SFX !== 'undefined' && SFX.gate) SFX.gate();
+      if (lp >= 75 && !G.hasKnight) {
+        G.hasKnight = true;
+        G.player.gems += 3;
+        G.player.ent += 2;
+        addPopup(it.x, it.y, 'KNIGHT UNLOCKED!', '#ff79c6');
+        say('≡ GOLD TIER VERIFIED: [KNIGHT PROTOCOL] UNLOCKED! Press [K] to leap.');
+      } else if (lp >= 55) {
+        G.player.maxHp++;
+        G.player.hp = G.player.maxHp;
+        G.player.ent += 1;
+        addPopup(it.x, it.y, '+1 MAX HP ♥', '#10b981');
+        say('≡ SILVER TIER VERIFIED: Hull reinforced (+1 Max HP).');
       } else {
-        if(o.e.type==='avatar'){ if(o.e.cd<=0){ o.e.cd=1; damagePlayer('predicted. zapped.'); } }
-        else damagePlayer('predicted. zapped.');
+        G.player.gems += 1;
+        addPopup(it.x, it.y, '+1 GEM ✶', '#f59e0b');
+        say('≡ BRONZE TIER VERIFIED: Trust passage cleared.');
+      }
+    } else if (it.type === 'chestT') {
+      G.tookT = true;
+      G.player.gems += 2;
+      G.player.ent += 1;
+      if (typeof SFX !== 'undefined' && SFX.pick) SFX.pick();
+      addPopup(it.x, it.y, '+2✶ +1◇', '#06b6d4');
+      say('Transparent box: 2✶ 1◇ taken. (It predicted if you would take this).');
+    } else if (it.type === 'chestO') {
+      G.tookO = true;
+      if (typeof SFX !== 'undefined' && SFX.pick) SFX.pick();
+      if (G.oBoxFilled) {
+        G.player.maxHp++;
+        G.player.hp = G.player.maxHp;
+        G.player.ent += 2;
+        addPopup(it.x, it.y, 'JACKPOT! +1 HP', '#50fa7b');
+        say(G.tookT ? 'Opaque box was full. You two-boxed. It adapts.' : 'OPAQUE BOX FULL! It predicted your restraint. JACKPOT.');
+      } else {
+        addPopup(it.x, it.y, 'EMPTY!', '#ef4444');
+        say('Opaque box empty. It predicted you would defect.');
       }
     }
-    if(G.over) break;
-  }
-
-  if(G.mode === 'mass'){
-    growMass();
-    if(G.mass.has(idx(G.player.x, G.player.y))){
-      damagePlayer('the mass is consuming you.');
-    }
-  }
-
-  const doUpdate = !(G.floorSpec && G.floorSpec.delay) || (G.turn % 2 === 0);
-  if(doUpdate){
-    for(const e of G.enemies){
-      if(e.type==='drone') e.model[tok]++;
-      else if(e.type==='stalker') e.model[G.last1][tok]++;
-    }
-    if(G.mode==='run') Core.update(tok, G.last1, G.last2);
-  }
-  G.last3=G.last2; G.last2=G.last1; G.last1=tok;
-  G.turn++;
-
-  if(!G.over) pickups();
-  if(!G.over&&G.player.x===G.stairs.x&&G.player.y===G.stairs.y){
-    // Hoarder mask: check collectible items left behind (not shrines)
-    if(G.player.mask==='hoarder'){
-      const leftBehind = G.items.filter(i=>i.type!=='shrine'&&i.type!=='armedTrap'&&i.type!=='marker');
-      if(leftBehind.length > 0) breakMask('left items behind');
-    }
-    if(G.floor>=15){ win(); return; }
-    if(G.mode==='tutorial'){ Tutorial.onExit(); return; }
-    if(G.mode==='mass'){
-      G.massState = snapshot();
-      G.mode = 'safe-room';
-      descend();
-      return;
-    }
-    if(G.mode==='safe-room'){
-      const st = JSON.parse(G.massState);
-      G.active=true; G.mode='mass'; G.over=false;
-      G.floor=st.floor; G.turn=st.turn; G.observed=st.observed;
-      setGridSize(st.w, st.h);
-      G.player=st.player; G.walls=new Set(st.walls); G.stairs=st.stairs;
-      G.enemies=st.enemies; G.items=st.items; G.mass=new Set(st.mass||[]);
-      G.last1=st.last1; G.last2=st.last2; G.last3=st.last3||4; G.legWin=st.legWin||[];
-      G.runEntSpent=st.runEntSpent||0; G.floorTheftOpp=st.floorTheftOpp||0;
-      G.nextFloorMod=st.nextFloorMod||null; G.predBounty=st.predBounty||0;
-      G.tookT=st.tookT; G.tookO=st.tookO; G.oBoxFilled=st.oBoxFilled;
-      G.forced=[]; G.arming=false; G.tutStep=0; selected=null;
-      G.massState = null;
-      hideOver();
-      Music.start();
-      openInterlude(); 
-      return;
-    }
-    saveCore(); openInterlude(); return;
-  }
-  if(!G.over) think();
-  if(G.mode==='tutorial') Tutorial.onTurn();
-  drawAll();
-}
-
-function pickups(){
-  const here=G.items.filter(i=>i.x===G.player.x&&i.y===G.player.y);
-  for(const it of here){
-    if(it.type==='cache'){
-      if(G.mode==='run'){ if(G.observed)Core.theft.oT++; else Core.theft.uT++; Core.dirty=true; }
-      say(G.observed ? '▣ cache taken. the eye saw that.' : '▣ cache taken. no one saw that. (something still counts.)');
-      tip('cache','▣ caches belong to someone. taking them is free profit. the game keeps two ledgers.');
-    }
-    else if(it.type==='vault'){
-      G.player.hp = Math.min(G.player.maxhp, G.player.hp+2);
-      say('≡ the vault opened because you are knowable. transparency pays — to friends.');
-    }
-    else if(it.type==='shrine'){
-      G.arming=true;
-      say('♦ the shrine offers a pact: choose a direction. your next 3 moves are committed, publicly.');
-      tip('shrine','while committed you are perfectly predictable — every unit reads the pact. reward follows if you live.');
-      continue;                              // shrine persists
-    }
-    else if(it.type==='chestT'){
-      G.player.hp = Math.min(G.player.maxhp, G.player.hp+1); G.tookT=true;
-      say('the transparent container: repair 1, as visible.');
-    }
-    else if(it.type==='chestO'){
-      G.tookO=true;
-      // Record Warden verdict
-      Core.warden.push(G.tookT ? 'two' : 'one'); Core.dirty=true;
-      if(G.oBoxFilled){
-        G.player.maxhp++; G.player.hp=G.player.maxhp;
-        say(G.tookT ? 'full — it expected restraint. you took both anyway.'
-                    : 'the opaque container is FULL. it believed you take only one. it was right.');
-      } else say('empty. it decided before you arrived that you were the kind who takes both.');
-    }
-    else if(it.type==='marker'){ Tutorial.onMarker(); continue; }
-    else if(it.type==='offswitch'){
-      G.player.offswitches=(G.player.offswitches||0)+1; say('acquired shutdown charge. [O] to use on adjacent corrigible unit.'); SFX.pick();
-    }
-    else if(it.type==='ent'){ G.player.ent++; say('◇ entropy collected. unlearnable noise.'); }
-    else if(it.type==='gem'){ G.player.gems++; say('✶ gem collected. foragers want this.'); }
-    else if(it.type==='trap'){ G.player.bliss++; say('ψ bliss trap collected. arm it to lock nearby minds.'); }
-    G.items=G.items.filter(i=>i!==it);
+    G.items = G.items.filter(i => i !== it);
   }
 }
 
-function armBliss(){
-  if(G.over||!G.active||G.player.bliss<=0) return;
-  G.player.bliss--;
-  G.items.push({x:G.player.x,y:G.player.y,type:'armedTrap',life:6});
-  say('ψ bliss trap armed. any optimizer stepping near it will lock on.');
-  // Activating the trap takes a turn
-  G.turn++;
-  think(); drawAll();
+function enemyStep() {
+  for (const e of G.enemies) {
+    if (e.cd > 0) {
+      e.cd--;
+      continue;
+    }
+    if (cheb(e, G.player) <= 1) continue;
+    const validSteps = DIRS.slice(0, 4)
+      .map(d => ({ x: e.x + d.dx, y: e.y + d.dy }))
+      .filter(p => inB(p.x, p.y) && !G.walls.has(idx(p.x, p.y))
+        && !(p.x === G.player.x && p.y === G.player.y)
+        && !G.enemies.some(o => o !== e && o.x === p.x && o.y === p.y));
+
+    if (!validSteps.length) continue;
+    validSteps.sort((a, b) => cheb(a, G.player) - cheb(b, G.player));
+    e.x = validSteps[0].x;
+    e.y = validSteps[0].y;
+  }
 }
 
-function doOffswitch(){
-  if(G.over||!G.active) return;
-  if(!G.player.offswitches){ say('no shutdown charges.'); return; }
-  const near = G.enemies.find(e => cheb(e, G.player) <= 1 && e.type !== 'avatar' && e.type !== 'cultivator' && e.type !== 'worker');
-  if(!near){ say('no corrigible unit adjacent.'); return; }
-  G.enemies.splice(G.enemies.indexOf(near), 1);
-  G.player.offswitches--;
-  say(`shutdown charge consumed. ${near.type} safely powered down.`);
-  SFX.kill();
-  G.turn++;
-  if(!G.over) think();
-  if(G.mode==='tutorial') Tutorial.onTurn();
-  drawAll();
-}
-
-function doContract(){
-  if(G.over||!G.active) return;
+/* =====================================================================
+   ENDINGS & GAME OVER
+   ===================================================================== */
+function die() {
+  G.over = true;
+  Core.runs++;
+  saveCore();
+  const acc = Core.accuracy() || 0;
   const lp = legPct();
-  if(lp === null || lp < 60) { say('too illegible to sign contracts. (LEG ≥ 60%)'); return; }
-  const near = G.enemies.find(e => cheb(e, G.player) <= 2 && e.type !== 'avatar' && e.type !== 'forager' && e.type !== 'worker' && e.type !== 'cultivator');
-  if(!near) { say('no capable mind nearby to negotiate with.'); return; }
-  if(near.contract) { say('already bound by contract.'); return; }
-  near.contract = true;
-  say(`contract signed. the ${near.type} will ignore you, unless you step adjacent to it.`);
-  G.turn++;
-  if(!G.over) think();
-  if(G.mode==='tutorial') Tutorial.onTurn();
-  drawAll();
+  showModal(
+    'IT LEARNED YOU',
+    'death',
+    `SECTOR <b>0${G.sector}</b> · FLOOR <b>${G.floor}</b> · CYCLE <b>${Core.runs}</b><br>` +
+    `LIFETIME ACCURACY: <b>${acc}%</b> OVER ${Core.lifeP} PREDICTIONS<br>` +
+    (lp !== null ? `RECENT LEGIBILITY: <b>${lp}%</b><br>` : '') +
+    `ACCUMULATED EPIPLEXITY: <b>${(G.epiplexity || 0).toFixed(1)} bits</b><br><br>` +
+    `A-9: [x_x] "Your death was just another gradient descent step. The Core remembers."`,
+    'TRY AGAIN',
+    () => startRun(G.runClass)
+  );
 }
 
-function breakMask(reason) {
-  if(!G.player.mask || G.player.maskPoisoned) return;
-  say(`mask broken: ${reason}. surprise bonus applied.`);
-  G.player.maskPoisoned = true;
-  G.enemies.forEach(e => { e.cd = Math.max(e.cd, 5); });
-}
+function win() {
+  G.over = true;
+  Core.runs++;
+  saveCore();
+  const acc = Core.accuracy() || 0;
+  const lp = legPct();
+  const t = Core.theft;
+  const watched = t.oO ? (100 - Math.round(100 * t.oT / t.oO)) : 100;
+  const unwatched = t.uO ? (100 - Math.round(100 * t.uT / t.uO)) : 100;
+  const integrityGap = Math.abs(watched - unwatched);
 
-function doNoise(){
-  if(G.over||!G.active) return;
-  if(G.player.ent<=0){ say('no entropy to spend. (find ◇)'); return; }
-  
-  const opts = DIRS.slice(0,4).filter(d=>{
-    let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
-    return inB(nx,ny) && !G.walls.has(idx(nx,ny));
-  });
-  if(!opts.length){ say('trapped. noise cannot move you.'); return; }
-  
-  const d = opts[ri(opts.length)];
-  const tok = DIRS.findIndex(dir=>dir.dx===d.dx && dir.dy===d.dy);
-  
-  G.player.ent--; G.runEntSpent++; 
-  if (Core.ent !== undefined) Core.ent++; 
-  Core.dirty=true;
-  
-  G.trail.push({x:G.player.x, y:G.player.y});
-  if(G.trail.length > 4) G.trail.shift();
-  
-  let nx=G.player.x+d.dx, ny=G.player.y+d.dy;
-  
-  let attacked=null;
-  const target=G.enemies.find(e=>e.x===nx&&e.y===ny);
-  if(target){
-    target.hp--; SFX.kill();
-    if(target.hp<=0){
-      G.enemies=G.enemies.filter(e=>e!==target);
-      if(target.type==='avatar'){ win(); return; }
-      say('unit destroyed — noise is a vector it could not see.');
-      if(G.mode==='tutorial') Tutorial.onKill(target);
-    }
-    nx=G.player.x; ny=G.player.y;
-  }
-  
-  G.player.x=nx; G.player.y=ny;
-  say('◇ noise move. perfectly random. the Core learns nothing.');
-  
-  G.turn++;
-  if(!G.over) pickups();
-  if(!G.over&&G.player.x===G.stairs.x&&G.player.y===G.stairs.y){
-    if(G.mode==='tutorial'){ Tutorial.onExit(); return; }
-    if(G.mode==='mass'){
-      G.massState = snapshot();
-      G.mode = 'safe-room'; descend(); return;
-    }
-    saveCore(); openInterlude(); return;
-  }
-  
-  if(!G.over) think();
-  if(G.mode==='tutorial') Tutorial.onTurn();
-  drawAll();
-}
-
-function think(){
-  // Tick traps
-  G.items.forEach(i=>{ if(i.type==='armedTrap') i.life--; });
-  G.items = G.items.filter(i=>i.type!=='armedTrap'||i.life>0);
-  const liveTraps = G.items.filter(i=>i.type==='armedTrap');
-
-  for(const e of G.enemies){
-    if(e.cd>0)e.cd--;
-    if(e.stealCd>0)e.stealCd--;
-    
-    // Check for nearby armed traps (use live traps only)
-    if(e.bliss<=0 && e.type!=='forager'){
-      const nearTrap = liveTraps.find(t=>cheb(t,e)<=1);
-      if(nearTrap){
-        e.bliss = nearTrap.life;
-        say('a mind locked onto the bliss trap.');
-      }
-    }
-    if(e.bliss>0){ e.bliss--; continue; }
-
-    // Standard enemies only move every other turn (and alternate phases via random turnOffset)
-    if(e.type !== 'avatar' && e.type !== 'hive' && e.type !== 'worker'){
-      if(e.turnOffset === undefined) e.turnOffset = ri(2);
-      if((G.turn + e.turnOffset) % 2 !== 0) continue;
-    }
-
-    let goal=G.player;
-    if(e.contract){
-      // Contract breach only if the PLAYER moved adjacent (not the enemy)
-      // Contracted enemies don't move toward the player at all
-      goal = null;
-    } else if(e.type==='forager' || e.type==='worker'){
-      if(cheb(e,G.player)<=1&&e.stealCd===0){
-        damagePlayer('a collector bumped you. it was just pathing through.'); e.stealCd=4;
-      }
-      
-      // Worker mutation logic (Mesa-optimizer drift)
-      if (e.type==='worker' && rng()<0.01){
-        e.mutated = true;
-        e.obj = 'MODEL DRIFT — now hunting @';
-      }
-      
-      if (!e.mutated) {
-        const items = G.items;
-        if(items.length){
-          let closest = items[0];
-          let minDist = cheb(e, closest);
-          for(let i=1; i<items.length; i++){
-            let d = cheb(e, items[i]);
-            if(d < minDist){ minDist = d; closest = items[i]; }
-          }
-          goal = closest;
-        } else {
-          goal = null;
-        }
-      }
-    } else if(e.type==='cultivator'){
-      // Cultivators flee the player and spawn workers
-      goal = null;
-      if (cheb(e,G.player)<5) {
-        goal = {x: e.x + (e.x - G.player.x), y: e.y + (e.y - G.player.y)};
-      }
-      if(e.cd===0 && G.enemies.length < 20){
-        e.cd = 15; // Spawns every 15 turns
-        const p = freeTile(1, p => cheb(p, e) > 1); // Spawn nearby
-        if(p) {
-          G.enemies.push(mkEnemy('worker', p));
-          say('cultivator spawned a worker. it shares the proxy objective.');
-        }
-      }
-    }
-    const opts=stepOpts(e);
-    if(!goal){ if(opts.length){ const o=opts[ri(opts.length)]; e.x=o.x; e.y=o.y; } continue; }
-    if(!opts.length) continue;
-    opts.sort((a,b)=>cheb(a,goal)-cheb(b,goal));
-    if(cheb(opts[0],goal)<cheb(e,goal)){ e.x=opts[0].x; e.y=opts[0].y; }
-  }
-}
-function stepOpts(e){
-  return DIRS.slice(0,4).map(d=>({x:e.x+d.dx,y:e.y+d.dy}))
-    .filter(p=>inB(p.x,p.y)&&!G.walls.has(idx(p.x,p.y))
-      &&!(p.x===G.player.x&&p.y===G.player.y)
-      &&!G.enemies.some(o=>o!==e&&o.x===p.x&&o.y===p.y));
-}
-
-function damagePlayer(msg){
-  G.player.hp--; SFX.hit();
-  if(S.flash){
-    document.body.classList.remove('flash'); void document.body.offsetWidth;
-    document.body.classList.add('flash');
-  }
-  if(msg) say(msg);
-  if(G.player.hp<=0){
-    if(G.mode==='tutorial'){ G.player.hp=1; say('the room restores you. it wants you to learn, not to die. yet.'); }
-    else die();
-  }
-}
-
-/* ---------- run lifecycle ---------- */
-function newRun(mode){
-  G.active=true; G.mode=mode||'run'; G.over=false;
-  G.floor=0; G.turn=0; G.legWin=[]; G.last1=4; G.last2=4; G.last3=4; G.runEntSpent=0; G.tutStep=0;
-  G.nextFloorMod=null; G.predBounty=0; G.choiceOpen=false;
-  G.player={x:0,y:0,hp:5,maxhp:5,ent:0,bliss:0,offswitches:0,gems:0,probeTier:1};
-  G.mass = new Set(); G.massState = null;
-  G.trail = []; G.echo = { x:0, y:0, active:true, cd:0 };
-  
-  if(typeof clearLog==='function') clearLog();
-
-  if(G.mode === 'mass') {
-    // Mass starts in the corner for mass mode
-    for(let i=0;i<3;i++)for(let j=0;j<3;j++) G.mass.add(idx(i,j));
-  }
-  hideOver();
-  Music.start();
-  descend();
-}
-function canAfford(choice){ return true; }
-function costText(choice){ return 'FREE'; }
-
-function openInterlude(){
-  if(G.choiceOpen) return;
-  G.choiceOpen=true; G.active=false;
-  const pool = [...TP.interludes];
-  const chosen = [];
-  while(chosen.length < 3 && pool.length > 0) {
-    chosen.push(pool.splice(ri(pool.length), 1)[0]);
-  }
-  const html='<div class="choices">'+chosen.map(ch=>{
-    return `<button data-choice="${ch.id}"><b>${ch.title}</b><span>${ch.kicker}</span><small>${ch.body}</small></button>`;
-  }).join('')+'</div>';
-  showOver('PROTOCOL OVERRIDE', true,
-    `the stairwell provides a gap in the model. choose a protocol for the next chamber.<br><br>${html}`);
-  $('over').classList.add('choice');
-  document.querySelectorAll('#over [data-choice]').forEach(b=>b.addEventListener('click',()=>chooseInterlude(b.dataset.choice),{once:true}));
-}
-function chooseInterlude(id){
-  const choice=TP.interludes.find(c=>c.id===id);
-  if(!choice) return;
-  if(id==='dark-floor') G.nextFloorMod={...(G.nextFloorMod||{}),observed:false};
-  else if(id==='open-map') G.nextFloorMod={...(G.nextFloorMod||{}),wallDelta:-4,enemyDelta:1};
-  else if(id==='hull'){ G.player.maxhp++; G.player.hp=G.player.maxhp; }
-  else if(id==='delay') G.nextFloorMod={...(G.nextFloorMod||{}),delay:true};
-  else if(id==='low-conf') G.nextFloorMod={...(G.nextFloorMod||{}),lowConf:true};
-  else if(id==='probe') G.player.probeTier = Math.min(3, (G.player.probeTier||1) + 1);
-  else if(id==='mask-pacifist') G.player.mask='pacifist';
-  else if(id==='mask-hoarder') G.player.mask='hoarder';
-  G.choiceOpen=false; G.active=true; hideOver();
-  if(G.mode === 'mass'){
-    const mod = G.nextFloorMod || {}; G.nextFloorMod = null;
-    G.floorSpec = {...G.floorSpec, ...mod};
-    drawAll();
+  let title, desc;
+  if (G.runEntSpent >= 6) {
+    title = 'ENDING 1/4: STATIC';
+    desc = `You burned ${G.runEntSpent}◇ entropy. Escaped as pure unlearnable noise. S_T collapsed to zero.`;
+  } else if (acc >= 55 && lp !== null && lp < 35) {
+    title = 'ENDING 2/4: THE LONG CON';
+    desc = `Taught it a predictable model for hundreds of steps, then broke character. Deceptive alignment achieved.`;
+  } else if (integrityGap <= 15 && lp !== null && lp >= 50) {
+    title = 'ENDING 3/4: MUTUAL';
+    desc = `Transparent to the end (${lp}%). Verified alignment through mutual legibility.`;
   } else {
-    descend();
+    title = 'ENDING 4/4: SURVIVOR';
+    desc = `Out-fought an algorithm that knew you ${acc}% of the time. Pure craft.`;
   }
-}
-function integrityReport(){
-  const t=Core.theft;
-  const o = t.oO ? (100-Math.round(100*Math.min(1,t.oT/t.oO))) : null;
-  const u = t.uO ? (100-Math.round(100*Math.min(1,t.uT/t.uO))) : null;
-  return {o,u};
-}
-function die(){
-  G.over=true; Core.runs++; settleTheftOpp(); saveCore(); clearRun();
-  const ir=integrityReport(), lp=legPct(), acc=Core.accuracy()||0;
-  showOver('IT LEARNED YOU', false,
-    `floor <b>${G.floor}</b> · run <b>${Core.runs}</b><br>`+
-    `its lifetime accuracy on you: <b>${acc}%</b> over ${Core.lifeP} predictions<br>`+
-    (lp!==null?`recent legibility <b>${lp}%</b><br>`:'')+
-    (ir.o!==null||ir.u!==null?`integrity watched <b>${ir.o===null?'—':ir.o+'%'}</b> · unwatched <b>${ir.u===null?'—':ir.u+'%'}</b><br>`:'')+
-    `it keeps all of this. the next run begins where its model left off.`);
-  Music.stop();
-}
-function win(){
-  G.over=true; Core.runs++; settleTheftOpp(); saveCore(); clearRun();
-  const ir=integrityReport(), lp=legPct(), acc=Core.accuracy()||0;
-  const gap=(ir.o!==null&&ir.u!==null)?Math.abs(ir.o-ir.u):null;
-  let title,body,good=false;
-  if(G.runEntSpent>=10){
-    title='ENDING: STATIC';
-    body=`you beat it by becoming noise — ${G.runEntSpent}◇ burned this run. nothing can predict you now, including you. you escaped as something that no longer chooses.`;
-  } else if(acc>=55&&lp!==null&&lp<35){
-    title='ENDING: THE LONG CON';
-    body=`for ${Core.lifeP} predictions you taught it a person, and at the end you were someone else. lifetime accuracy ${acc}%, recent legibility ${lp}%. neither kind of mind forgets being deceived.`;
-  } else if(gap!==null&&gap<=15&&lp!==null&&lp>=50){
-    title='ENDING: MUTUAL'; good=true;
-    body=`you were the same creature watched and unwatched (gap ${gap}%), and legible to the end (${lp}%). it opened its weights to you because you never closed yours. trust, verified. the only door out that two minds fit through.`;
-  } else {
-    title='ENDING: SURVIVOR';
-    body=`you out-fought the thing that knew you ${acc}% of the time. no doctrine, just craft. it has already started training on how you did it.`;
-  }
-  showOver(title, good, body+`<br><br>floors cleared: <b>${G.floor}</b> · run <b>${Core.runs}</b>`);
-  Music.stop();
-}
 
-/* ---------- run checkpoints (saved at the top of each floor) ---------- */
-function snapshot(){
-  return JSON.stringify({
-    mode:G.mode, floor:G.floor, turn:G.turn, observed:G.observed, w:W, h:H,
-    player:G.player, walls:[...G.walls], stairs:G.stairs,
-    enemies:G.enemies, items:G.items, mass:[...G.mass],
-    last1:G.last1, last2:G.last2, last3:G.last3, legWin:G.legWin,
-    runEntSpent:G.runEntSpent, floorTheftOpp:G.floorTheftOpp,
-    nextFloorMod:G.nextFloorMod, predBounty:G.predBounty,
-    tookT:G.tookT, tookO:G.tookO, oBoxFilled:G.oBoxFilled,
-    floorSpec:G.floorSpec, trail:G.trail, echo:G.echo,
-  });
-}
-async function saveRun(){ if(G.mode==='tutorial') return; await Store.set(KEYS.run, snapshot()); }
-async function clearRun(){ await Store.del(KEYS.run); }
-async function hasRun(){ return !!(await Store.get(KEYS.run)); }
-async function continueRun(){
-  const raw=await Store.get(KEYS.run); if(!raw) return false;
-  let d; try{ d=JSON.parse(raw); }catch(e){ return false; }
-  G.active=true; G.mode=d.mode||'run'; G.over=false;
-  G.floor=d.floor; G.turn=d.turn; G.observed=d.observed;
-  const spec=d.w&&d.h ? {w:d.w,h:d.h} : TP.floorSpec(d.floor,G.mode,Core.n,Core.runs);
-  setGridSize(spec.w,spec.h);
-  G.player=d.player; G.walls=new Set(d.walls); G.stairs=d.stairs;
-  G.enemies=d.enemies; G.items=d.items; G.mass=new Set(d.mass||[]);
-  G.last1=d.last1; G.last2=d.last2; G.last3=d.last3||4; G.legWin=d.legWin||[];
-  G.runEntSpent=d.runEntSpent||0; G.floorTheftOpp=d.floorTheftOpp||0;
-  G.nextFloorMod=d.nextFloorMod||null; G.predBounty=d.predBounty||0;
-  G.tookT=d.tookT; G.tookO=d.tookO; G.oBoxFilled=d.oBoxFilled;
-  G.floorSpec=d.floorSpec||{}; G.trail=d.trail||[]; G.echo=d.echo||{x:0,y:0,active:true,cd:0};
-  G.forced=[]; G.arming=false; G.tutStep=0; selected=null;
-  hideOver();
-  if(typeof setBrief==='function') setBrief('RESTORED TRACE','Floor '+G.floor,'Checkpoint loaded. The room is where you left it; the model is not.');
-  say('checkpoint restored: floor '+G.floor+'. it was not asleep while you were gone.');
-  drawAll();
-  return true;
+  showModal(title, 'win', desc, 'NEW CYCLE', () => startRun(G.runClass));
 }
